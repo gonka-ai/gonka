@@ -83,16 +83,11 @@ func standModel(opts e2eEnvOptions) string {
 }
 
 type e2eEnvOptions struct {
-	hostVolumeNames         []string
-	usePostgresStorage      bool
-	hostEnv                 map[string]string
-	hostEnvOverrides        map[int]map[string]string
-	mockChainEnv            map[string]string
-	devshardctlEnvOverrides map[string]string
-
-	// runGateway drives the stack with cmd/gateway in place of devshardctl. The two cannot run side by
-	// side: both would open the same escrow and advance the same nonce sequence.
-	runGateway          bool
+	hostVolumeNames     []string
+	usePostgresStorage  bool
+	hostEnv             map[string]string
+	hostEnvOverrides    map[int]map[string]string
+	mockChainEnv        map[string]string
 	gatewayEnvOverrides map[string]string
 	// mockChainParams patches the chain's escrow params first: a session takes its deadlines when opened.
 	mockChainParams map[string]any
@@ -107,15 +102,10 @@ type e2eEnvOptions struct {
 	gatewayFiles     []testcontainers.ContainerFile
 }
 
-func startHappyPathEnv(ctx context.Context, t *testing.T, images e2eImages) *e2eEnv {
-	t.Helper()
-	return startE2EEnv(ctx, t, images, e2eEnvOptions{})
-}
-
 func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEnvOptions) *e2eEnv {
 	t.Helper()
-	testutil.DebugLogf(t, "E2E images: mock-chain=%s host=%s devshardctl=%s postgres=%s",
-		images.mockChain, images.host, images.devshardctl, images.postgres)
+	testutil.DebugLogf(t, "E2E images: mock-chain=%s host=%s gateway=%s postgres=%s",
+		images.mockChain, images.host, images.gateway, images.postgres)
 
 	networkName := fmt.Sprintf("devshard-e2e-%s-%d",
 		strings.ToLower(strings.NewReplacer("/", "-", "_", "-").Replace(t.Name())),
@@ -189,63 +179,14 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 		env.hostControlURLs[i] = containerURL(ctx, t, env.startHostWithEnv(ctx, t, i, opts.hostEnvOverrides[i]), "8080/tcp")
 	}
 
-	if opts.runGateway {
-		env.mockChain = mockChain
-		env.startGateway(ctx, t, opts)
-		require.NotNil(t, mockChain)
-		require.NotNil(t, postgres)
-		return env
-	}
-
-	devshardctlEnv := map[string]string{
-		"DEVSHARD_E2E":           "1",
-		"DEVSHARD_ESCROW_ID":     defaultEscrowID,
-		"DEVSHARD_CHAIN_GRPC":    mockChainAlias + ":9090",
-		"DEVSHARD_PUBLIC_API":    "http://" + mockChainAlias + ":9191",
-		"DEVSHARD_PARAMS_SOURCE": "chain",
-		"DEVSHARD_PRIVATE_KEY":   testutil.EnvDefault("DEVSHARD_E2E_USER_PRIVATE_KEY", testutil.UserPrivateKey),
-		"DEVSHARD_ADMIN_API_KEY": testutil.AdminAPIKey,
-		"DEVSHARD_STORAGE_PATH":  "/tmp/devshardctl",
-		"DEVSHARD_MODEL":         standModel(opts),
-		"GATEWAY_MAX_TOKENS_CAP": strconv.Itoa(e2eMaxTokensCap),
-		"DEVSHARD_STATS_PORT":    "9091",
-		// Hosts are Docker DNS names that resolve to private IPs.
-		// Production leaves this unset so the dial-time SSRF guard stays on.
-		"DEVSHARD_ALLOW_PRIVATE_ADDRESSES": "true",
-		// E2E hosts have no versiond-router catalog and no chain-oracle tip, so
-		// POST /height-sync omits. Keep the production seed gate on in citest.
-		"DEVSHARD_REQUIRE_HEIGHT_SEED": "false",
-		// Production quiet-settle default is 5m; keep 5s so settle waits stay under budget.
-		"DEVSHARD_QUIET_SETTLE_DELAY": "5s",
-	}
-	for k, v := range opts.devshardctlEnvOverrides {
-		devshardctlEnv[k] = v
-	}
-	devshardctl := env.startContainer(ctx, t, containerSpec{
-		name:  devshardCtlName,
-		image: images.devshardctl,
-		port:  "8080/tcp",
-		extraPorts: []string{
-			"9091/tcp",
-		},
-		aliases:  []string{devshardCtlName},
-		env:      devshardctlEnv,
-		waitPath: "/v1/status",
-	})
-
-	env.clientURL = containerURL(ctx, t, devshardctl, "8080/tcp")
-	testutil.DebugLogf(t, "devshardctl client URL: %s", env.clientURL)
-	env.statsURL = containerURL(ctx, t, devshardctl, "9091/tcp")
-	testutil.DebugLogf(t, "devshardctl accounting stats URL: %s", env.statsURL)
-	testutil.WaitGatewayHeightSeedReady(t, env.clientURL, 3*time.Minute)
-
+	env.mockChain = mockChain
+	env.startGateway(ctx, t, opts)
 	require.NotNil(t, mockChain)
 	require.NotNil(t, postgres)
 	return env
 }
 
-// startGateway runs cmd/gateway against the same hosts and the same mock chain devshardctl uses, so a
-// scenario written for one binary describes the same network for the other.
+// startGateway runs cmd/gateway against the stand's hosts and mock chain.
 func (e *e2eEnv) startGateway(ctx context.Context, t *testing.T, opts e2eEnvOptions) {
 	t.Helper()
 	gatewayEnv := map[string]string{
@@ -255,7 +196,7 @@ func (e *e2eEnv) startGateway(ctx context.Context, t *testing.T, opts e2eEnvOpti
 		"DEVSHARD_PUBLIC_API":    "http://" + mockChainAlias + ":9191",
 		"DEVSHARD_ADMIN_API_KEY": testutil.AdminAPIKey,
 		"DEVSHARD_STORAGE_DIR":   "/tmp/gateway",
-		"GATEWAY_MAX_TOKENS_CAP": "4096",
+		"GATEWAY_MAX_TOKENS_CAP": strconv.Itoa(e2eMaxTokensCap),
 		"DEVSHARD_PORT":          "8080",
 		// Off in production, on here: it is the only surface that says what became of each nonce.
 		"DEVSHARD_STATS_ENABLED":          "true",
@@ -265,7 +206,7 @@ func (e *e2eEnv) startGateway(ctx context.Context, t *testing.T, opts e2eEnvOpti
 		// Production leaves this unset so the dial-time SSRF guard stays on.
 		"DEVSHARD_ALLOW_PRIVATE_ADDRESSES": "true",
 		// On in production, off here: the stand's hosts have no catalog and no oracle, so no session
-		// could seed a tip. The cadence itself is left on, as devshardctl runs it.
+		// could seed a tip. The cadence itself is left on.
 		"DEVSHARD_REQUIRE_HEIGHT_SEED": "false",
 		// The stand runs no node manager, so governance is read from the mock chain.
 		"DEVSHARD_PARAMS_SOURCE": "chain",
@@ -352,7 +293,7 @@ func (e *e2eEnv) createPostgresHostDatabases(ctx context.Context, t *testing.T, 
 }
 
 // e2eHostSessionEnv returns escrow session fields that must match
-// e2e/mock-chain-config.yaml so devshardctl (chain-backed) and hosts agree.
+// e2e/mock-chain-config.yaml so the gateway (chain-backed) and hosts agree.
 func e2eHostSessionEnv() map[string]string {
 	return map[string]string{
 		"DEVSHARD_TOKEN_PRICE":                  "7",

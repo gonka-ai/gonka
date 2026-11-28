@@ -34,6 +34,7 @@ func (silentNarrator) SettlementReconciled(escrowID, txHash string)             
 func (silentNarrator) SettledRecordDropped(escrowID string)                                     {}
 func (silentNarrator) EscrowTickFailed(err error)                                               {}
 func (silentNarrator) TimeoutsSwept(due, applied, failed int)                                   {}
+func (silentNarrator) EscrowSettledPastUnresolved(escrowID string, nonces []uint64)             {}
 func (silentNarrator) EscrowPlanned(model string, creates, retires int, reasons string, moneyShort bool, need, liquid uint64, fullCount int) {
 }
 func (silentNarrator) EscrowStarved(escrowID string, free uint64)                  {}

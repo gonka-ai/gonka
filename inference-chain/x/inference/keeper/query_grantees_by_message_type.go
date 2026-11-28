@@ -28,7 +28,7 @@ func (k Keeper) GranteesByMessageType(ctx context.Context, req *types.QueryGrant
 
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	blockTime := sdkCtx.BlockTime()
-	// devshard and devshardctl ship on their own upgrade cycle, so binaries in
+	// devshard and its gateway ship on their own upgrade cycle, so binaries in
 	// the field still probe warm keys by the pre-v0.2.15 marker. Participants
 	// who joined after v0.2.15 have no legacy grant at all, so without this
 	// alias those binaries would silently see every new host as not-warm. Keep

@@ -105,7 +105,7 @@ func TestEventValidation(t *testing.T) {
 	scenario.Workload.Events = allActionEvents()
 	require.NoError(t, scenario.Validate())
 	events := scenario.TimelineEvents()
-	require.Equal(t, "devshardctl", events[4].Target)
+	require.Equal(t, "gateway", events[4].Target)
 	require.Equal(t, "mock-chain", events[8].Target)
 	for _, tc := range []struct {
 		name  string
@@ -116,7 +116,7 @@ func TestEventValidation(t *testing.T) {
 		{"host target", Event{Action: "pause", Target: "mock-chain", At: "5m", Until: "6m"}, "target must be a versiond host"},
 		{"host outside topology", Event{Action: "pause", Target: "versiond-5", At: "5m", Until: "6m"}, "target must be a versiond host"},
 		{"ml node target", Event{Action: "ml_fault", Target: "mock-openai-9", At: "5m", Until: "6m", Params: map[string]any{"patch": map[string]any{"hang": true}}}, "target must be a mock_ml node"},
-		{"global target", Event{Action: "gateway_restart", Target: "versiond-1", At: "5m"}, "target must be empty or devshardctl"},
+		{"global target", Event{Action: "gateway_restart", Target: "versiond-1", At: "5m"}, "target must be empty or gateway"},
 		{"missing until", Event{Action: "pause", Target: "versiond-1", At: "5m"}, "requires until"},
 		{"until on instant", Event{Action: "container_restart", Target: "versiond-1", At: "5m", Until: "6m"}, "does not take until"},
 		{"until before at", Event{Action: "pause", Target: "versiond-1", At: "5m", Until: "4m"}, "until must be after at"},
@@ -244,7 +244,7 @@ func TestExecuteEventDispatch(t *testing.T) {
 		{Event{Action: "throttle", Target: "versiond-2", Params: map[string]any{"cpus": 0.25}}, []string{"cpu_limit versiond-2", "throttle versiond-2 0.25", "throttle versiond-2 0"}},
 		{Event{Action: "container_restart", Target: "versiond-2"}, []string{"compose restart versiond-2", "compose start versiond-2"}},
 		{Event{Action: "container_kill", Target: "versiond-2"}, []string{"compose kill -s KILL versiond-2", "compose start versiond-2"}},
-		{Event{Action: "gateway_restart", Target: "devshardctl", Params: map[string]any{"signal": "TERM"}}, []string{"compose kill -s TERM devshardctl", "compose start devshardctl"}},
+		{Event{Action: "gateway_restart", Target: "gateway", Params: map[string]any{"signal": "TERM"}}, []string{"compose kill -s TERM gateway", "compose start gateway"}},
 		{Event{Action: "ml_fault", Target: "mock-openai-1", Params: map[string]any{"patch": map[string]any{"pause_stream": true, "http_status": 429, "sse_error_message": "boom"}}},
 			[]string{`ml_fault mock-openai-1 {"http_status":429,"pause_stream":true,"sse_error_message":"boom"}`, `ml_fault mock-openai-1 {"http_status":0,"pause_stream":false,"sse_error_message":""}`}},
 		{Event{Action: "tripfile", Target: "versiond-3", Params: map[string]any{"file": "devshard-fault-drop-payload"}}, []string{"tripfile versiond-3 /tmp/devshard-fault-drop-payload true", "tripfile versiond-3 /tmp/devshard-fault-drop-payload false"}},
@@ -680,13 +680,13 @@ func TestEventRunnerFailsOnUnfiredEvents(t *testing.T) {
 	runner.records = []EventRecord{
 		{ID: "c1", Action: "ml_fault", Target: "mock-openai-3", StartedAt: &now, EndedAt: &now},
 		{ID: "c5", Action: "pause", Target: "versiond-5", Error: "signal: killed"},
-		{ID: "c6", Action: "gateway_restart", Target: "devshardctl"},
+		{ID: "c6", Action: "gateway_restart", Target: "gateway"},
 	}
 	close(runner.done)
 	_, err := runner.finish(false)
 	require.ErrorContains(t, err, "c5")
-	require.ErrorContains(t, err, "event c6 (gateway_restart devshardctl): never applied")
+	require.ErrorContains(t, err, "event c6 (gateway_restart gateway): never applied")
 	require.Contains(t, buf.String(), "stage=events fired=1/3")
 	require.Contains(t, buf.String(), "event=c5 action=pause target=versiond-5 stage=not_fired")
-	require.Contains(t, buf.String(), "event=c6 action=gateway_restart target=devshardctl stage=not_fired")
+	require.Contains(t, buf.String(), "event=c6 action=gateway_restart target=gateway stage=not_fired")
 }

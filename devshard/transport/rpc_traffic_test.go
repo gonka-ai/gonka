@@ -333,10 +333,10 @@ func TestSnapshotPeerReconnects(t *testing.T) {
 	t.Cleanup(ResetPeerReconnectsForTest)
 	ResetPeerReconnectsForTest()
 	now := time.Unix(1_710_000_000, 0)
-	processReconnects.add(now, "hostB@v5", ReconnectWatch)
-	processReconnects.add(now, "hostB@v5", ReconnectWatch)
+	processReconnects.add(now, "hostB@v5", reattachReasonWatch)
+	processReconnects.add(now, "hostB@v5", reattachReasonWatch)
 	got := processReconnects.snapshot(now.Add(time.Minute))
-	require.Equal(t, []RPCStatsReconnect{{Peer: "hostB@v5", Reason: ReconnectWatch, Attempts: 2}}, got)
+	require.Equal(t, []RPCStatsReconnect{{Peer: "hostB@v5", Reason: reattachReasonWatch, Attempts: 2}}, got)
 }
 
 func TestRPCTraffic_ObserveShardsConcurrent(t *testing.T) {
@@ -501,40 +501,4 @@ func TestRPCTraffic_ClosedWarnSurvivesPruneWindow(t *testing.T) {
 	})
 	require.Equal(t, int64(1), warns.Load())
 	require.Equal(t, uint64(2), banned.Load(), "a minute past the ring window must still warn with both shards")
-}
-
-func TestRPCStatsLabelsFoldUnknown(t *testing.T) {
-	procs := []string{
-		rpcpbconnect.PeerAuthServiceAttachProcedure,
-		rpcpbconnect.PeerAuthServiceWatchProcedure,
-		rpcpbconnect.SessionServiceChatProcedure,
-		rpcpbconnect.SessionServiceSeedHeightSyncProcedure,
-		rpcpbconnect.SessionServiceRepairHeightSyncProcedure,
-		rpcpbconnect.SessionServiceVerifyTimeoutProcedure,
-		rpcpbconnect.SessionServiceVerifyErrorMissProcedure,
-		rpcpbconnect.SessionServiceChallengeReceiptProcedure,
-		rpcpbconnect.SessionServiceGetDiffsProcedure,
-		rpcpbconnect.SessionServiceGetMempoolProcedure,
-		rpcpbconnect.SessionServiceGetStateProcedure,
-		rpcpbconnect.SessionServiceGetSignaturesProcedure,
-		rpcpbconnect.GossipServiceNonceProcedure,
-		rpcpbconnect.GossipServiceTxsProcedure,
-		rpcpbconnect.PayloadServiceGetPayloadProcedure,
-	}
-	for _, p := range procs {
-		name := RPCEndpointName(p)
-		require.Equal(t, name, RPCStatsEndpointLabel(name), p)
-	}
-	require.Equal(t, RPCStatsOtherLabel, RPCStatsEndpointLabel("not-a-method"))
-	require.Equal(t, RPCStatsOtherLabel, RPCStatsEndpointLabel(""))
-	require.Equal(t, RPCZoneShared, RPCStatsZoneLabel(RPCZoneShared))
-	require.Equal(t, RPCZoneStreams, RPCStatsZoneLabel(RPCZoneStreams))
-	require.Equal(t, RPCZoneAttachFloor, RPCStatsZoneLabel(RPCZoneAttachFloor))
-	require.Equal(t, RPCZoneAttachOrigin, RPCStatsZoneLabel(RPCZoneAttachOrigin))
-	require.Equal(t, RPCZoneAttachRenew, RPCStatsZoneLabel(RPCZoneAttachRenew))
-	require.Equal(t, RPCStatsOtherLabel, RPCStatsZoneLabel("made-up"))
-	require.Equal(t, ReconnectWatch, RPCStatsReconnectReason(ReconnectWatch))
-	require.Equal(t, ReconnectTTL, RPCStatsReconnectReason(ReconnectTTL))
-	require.Equal(t, ReconnectFirstAttach, RPCStatsReconnectReason(ReconnectFirstAttach))
-	require.Equal(t, RPCStatsOtherLabel, RPCStatsReconnectReason("invented"))
 }

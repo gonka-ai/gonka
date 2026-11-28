@@ -30,7 +30,7 @@ func fixedPayload() state.SettlementPayload {
 // Test flow:
 //  1. Build a fixed settlement payload with three non-contiguous slots, non-zero fees and a non-empty version.
 //  2. Call `Root` on it.
-//  3. Assert the root equals the stored bytes, computed once from the expressions devshardctl used before it called `Root`.
+//  3. Assert the root equals the stored bytes, computed once and pinned so any change to the root encoding fails here.
 func TestRootMatchesTheFixedVector(t *testing.T) {
 	root, err := Root(fixedPayload())
 	if err != nil {

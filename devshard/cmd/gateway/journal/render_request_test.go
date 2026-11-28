@@ -45,12 +45,12 @@ func fieldValue(fields []any, key string) any {
 }
 
 // Test flow:
-//  1. Build a `RequestLine` from `servedOutcome` with both a race error and a deliver error set.
+//  1. Build a `RequestLine` from `servedOutcome` with a trace id and both a race error and a deliver error set.
 //  2. Render its fields via `requestFinishedFields`.
 //  3. Assert the field count equals `loggedFieldSlots`, the widest finished-request line's hand-counted reservation.
 func TestARequestFinishedLineFitsWhatItReserves(t *testing.T) {
 	line := RequestLine{
-		RequestID: "request-1", Model: "qwen", APIKeyID: "acf99d94", EscrowID: "escrow-1", ClientStream: true, Outcome: servedOutcome(),
+		RequestID: "request-1", TraceID: "trace-1", Model: "qwen", APIKeyID: "acf99d94", EscrowID: "escrow-1", ClientStream: true, Outcome: servedOutcome(),
 		Verdict: "served", Elapsed: 3 * time.Second, RaceErr: errors.New("race"), DeliverErr: errors.New("deliver"),
 	}
 
@@ -253,5 +253,50 @@ func TestLoggedErrorCutsOnARuneBoundary(t *testing.T) {
 
 	if !utf8.ValidString(logged) {
 		t.Fatalf("logged error is not valid UTF-8: %q", logged)
+	}
+}
+
+type recordedLines struct{ fields [][]any }
+
+func (recorded *recordedLines) Info(_ string, keyvals ...any) {
+	recorded.fields = append(recorded.fields, keyvals)
+}
+func (recorded *recordedLines) Warn(_ string, keyvals ...any) {
+	recorded.fields = append(recorded.fields, keyvals)
+}
+func (recorded *recordedLines) Error(_ string, keyvals ...any) {
+	recorded.fields = append(recorded.fields, keyvals)
+}
+
+// Test flow:
+//  1. Render each of the four request lines, and the cache-hit shape of the finished line, once with a trace id and once with tracing off.
+//  2. Assert the lines rendered with a trace id carry `request_id` and `trace_id`.
+//  3. Assert the lines rendered with tracing off carry neither.
+func TestEveryRequestLineCarriesTheRequestIDAndTheTraceIDOnlyUnderATrace(t *testing.T) {
+	renderers := map[string]func(logSink, *RequestLine){
+		"finished":    renderRequestFinished,
+		"cache hit":   func(lines logSink, line *RequestLine) { line.CacheHit = true; renderRequestFinished(lines, line) },
+		"throttled":   renderRequestThrottled,
+		"body unread": renderRequestBodyUnread,
+		"not cached":  renderReplyNotCached,
+	}
+	for name, render := range renderers {
+		t.Run(name, func(t *testing.T) {
+			for _, traceID := range []string{"trace-1", NoTraceID} {
+				recorded := &recordedLines{}
+				line := RequestLine{RequestID: "request-1", TraceID: traceID, Model: "qwen", Outcome: servedOutcome(), BodyErr: errors.New("read")}
+
+				render(recorded, &line)
+
+				require.Len(t, recorded.fields, 1)
+				if traceID == NoTraceID {
+					require.Nil(t, fieldValue(recorded.fields[0], logkey.RequestID))
+					require.Nil(t, fieldValue(recorded.fields[0], logkey.TraceID))
+					continue
+				}
+				require.Equal(t, "request-1", fieldValue(recorded.fields[0], logkey.RequestID))
+				require.Equal(t, traceID, fieldValue(recorded.fields[0], logkey.TraceID))
+			}
+		})
 	}
 }

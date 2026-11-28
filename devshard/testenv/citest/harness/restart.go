@@ -1,8 +1,7 @@
 package harness
 
 import (
-	"encoding/json"
-	"fmt"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -14,186 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// GatewaySessionSnapshot captures gateway-visible session state for restart citest.
-type GatewaySessionSnapshot struct {
-	EscrowID       string
-	SessionNonce   uint64 // devshardctl session nonce (/v1/status)
-	LatestNonce    uint64 // state machine latest nonce (/v1/debug/state)
-	Balance        uint64
-	Phase          string
-	LiveInferences int
-	// OpenHolds counts live inferences that still hold a reservation:
-	// pending/started only. Challenged may invalidate+refund later, but that
-	// path is Phase B and must not gate restart settle the same way.
-	OpenHolds int
-}
-
-type gatewayStatusBody struct {
-	EscrowID string `json:"escrow_id"`
-	Nonce    uint64 `json:"nonce"`
-	Phase    string `json:"phase"`
-	Balance  uint64 `json:"balance"`
-}
-
-type gatewayDebugStateBody struct {
-	Nonce            uint64         `json:"nonce"`
-	Balance          uint64         `json:"balance"`
-	Phase            string         `json:"phase"`
-	LiveInferences   int            `json:"live_inferences"`
-	LiveStatusCounts map[string]int `json:"live_status_counts"`
-}
-
-// GetGatewaySessionSnapshot reads /v1/status and /v1/debug/state from devshardctl.
-func GetGatewaySessionSnapshot(t *testing.T, client *http.Client, gatewayURL, adminAPIKey string) GatewaySessionSnapshot {
-	t.Helper()
-	if client == nil {
-		client = HTTPClient()
-	}
-
-	var status gatewayStatusBody
-	require.NoError(t, getGatewayJSON(t, client, gatewayURL+"/v1/status", adminAPIKey, &status))
-
-	var debug gatewayDebugStateBody
-	require.NoError(t, getGatewayJSON(t, client, gatewayURL+"/v1/debug/state", adminAPIKey, &debug))
-
-	escrowID := status.EscrowID
-	if escrowID == "" {
-		escrowID = GetGatewayEscrowID(t, client, gatewayURL)
-	}
-
-	return GatewaySessionSnapshot{
-		EscrowID:       escrowID,
-		SessionNonce:   status.Nonce,
-		LatestNonce:    debug.Nonce,
-		Balance:        status.Balance,
-		Phase:          status.Phase,
-		LiveInferences: debug.LiveInferences,
-		OpenHolds:      gatewaySessionOpenHolds(debug.LiveStatusCounts),
-	}
-}
-
-// gatewaySessionOpenHolds counts statuses that still hold a reservation.
-// Finished/validated/timed_out/invalidated stay live until auto-seal and are
-// ignored. Challenged is ignored too: ActualCost is already charged, and a
-// later invalidation refund must not block WaitGatewaySessionSettled across a
-// host restart while Phase B is still running.
-func gatewaySessionOpenHolds(statusCounts map[string]int) int {
-	if len(statusCounts) == 0 {
-		return 0
-	}
-	return statusCounts["pending"] + statusCounts["started"]
-}
-
-func getGatewayJSON(t *testing.T, client *http.Client, url, adminAPIKey string, dest any) error {
-	t.Helper()
-	req, err := http.NewRequest(http.MethodGet, url, nil)
-	if err != nil {
-		return err
-	}
-	if adminAPIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+adminAPIKey)
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-	if resp.StatusCode >= 300 {
-		return fmt.Errorf("GET %s: %d %s", url, resp.StatusCode, string(body))
-	}
-	return json.Unmarshal(body, dest)
-}
-
-// GatewayHostStats is the per-slot ledger from GET /v1/state.
-type GatewayHostStats struct {
-	Missed               uint32 `json:"missed"`
-	Invalid              uint32 `json:"invalid"`
-	Cost                 uint64 `json:"cost"`
-	RequiredValidations  uint32 `json:"required_validations"`
-	CompletedValidations uint32 `json:"completed_validations"`
-	Validated            uint32 `json:"validated"`
-	Finished             uint32 `json:"finished"`
-}
-
-type gatewayStateBody struct {
-	Session struct {
-		Balance     uint64 `json:"balance"`
-		LatestNonce uint64 `json:"latest_nonce"`
-	} `json:"session"`
-	HostStats map[string]GatewayHostStats `json:"host_stats"`
-}
-
-// GatewayLedgerSnapshot is session balance, producing nonce, and per-slot
-// host stats from one GET /v1/state.
-type GatewayLedgerSnapshot struct {
-	Balance     uint64
-	LatestNonce uint64
-	HostStats   map[string]GatewayHostStats
-}
-
-// GetGatewayLedgerSnapshot reads /v1/state host_stats, session balance, and
-// latest_nonce from a single response.
-func GetGatewayLedgerSnapshot(t *testing.T, client *http.Client, gatewayURL, adminAPIKey string) GatewayLedgerSnapshot {
-	t.Helper()
-	if client == nil {
-		client = HTTPClient()
-	}
-	var body gatewayStateBody
-	require.NoError(t, getGatewayJSON(t, client, gatewayURL+"/v1/state", adminAPIKey, &body))
-	return GatewayLedgerSnapshot{
-		Balance:     body.Session.Balance,
-		LatestNonce: body.Session.LatestNonce,
-		HostStats:   body.HostStats,
-	}
-}
-
-// GetGatewayFeePerNonce reads frozen session FeePerNonce from GET /v1/status.
-func GetGatewayFeePerNonce(t *testing.T, client *http.Client, gatewayURL, adminAPIKey string) uint64 {
-	t.Helper()
-	if client == nil {
-		client = HTTPClient()
-	}
-	var status struct {
-		Config struct {
-			FeePerNonce uint64 `json:"fee_per_nonce"`
-		} `json:"config"`
-	}
-	require.NoError(t, getGatewayJSON(t, client, gatewayURL+"/v1/status", adminAPIKey, &status))
-	return status.Config.FeePerNonce
-}
-
-// GatewayDebugInference is one record from GET /v1/debug/inferences.
-type GatewayDebugInference struct {
-	Status       string `json:"status"`
-	ExecutorSlot uint32 `json:"executor_slot"`
-	ReservedCost uint64 `json:"reserved_cost"`
-	ActualCost   uint64 `json:"actual_cost"`
-	VotesValid   uint32 `json:"votes_valid"`
-	VotesInvalid uint32 `json:"votes_invalid"`
-}
-
-type gatewayInferencesBody struct {
-	Inferences map[string]GatewayDebugInference `json:"inferences"`
-}
-
-// GetGatewayDebugInferences reads GET /v1/debug/inferences.
-func GetGatewayDebugInferences(t *testing.T, client *http.Client, gatewayURL, adminAPIKey string) map[string]GatewayDebugInference {
-	t.Helper()
-	if client == nil {
-		client = HTTPClient()
-	}
-	var body gatewayInferencesBody
-	require.NoError(t, getGatewayJSON(t, client, gatewayURL+"/v1/debug/inferences", adminAPIKey, &body))
-	if body.Inferences == nil {
-		return map[string]GatewayDebugInference{}
-	}
-	return body.Inferences
-}
-
 // PostAdminDeactivateDevshard POSTs /v1/admin/devshards/{id}/deactivate.
 // Retires the runtime from memory (same registry drop settle uses).
 func PostAdminDeactivateDevshard(t *testing.T, client *http.Client, gatewayURL, adminAPIKey, escrowID string) {
@@ -204,9 +23,7 @@ func PostAdminDeactivateDevshard(t *testing.T, client *http.Client, gatewayURL, 
 	url := strings.TrimRight(gatewayURL, "/") + "/v1/admin/devshards/" + escrowID + "/deactivate"
 	req, err := http.NewRequest(http.MethodPost, url, nil)
 	require.NoError(t, err)
-	if adminAPIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+adminAPIKey)
-	}
+	setAdminBearer(req, adminAPIKey)
 	resp, err := client.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -216,37 +33,31 @@ func PostAdminDeactivateDevshard(t *testing.T, client *http.Client, gatewayURL, 
 }
 
 type adminParticipantsBody struct {
-	Participants []struct {
-		ParticipantKey       string `json:"participant_key"`
-		Quarantined          bool   `json:"quarantined"`
-		Blocked              bool   `json:"blocked"`
-		AvailableForCapacity bool   `json:"available_for_capacity"`
-	} `json:"participants"`
+	Participants []string `json:"participants"`
 }
 
-// ClearGatewayParticipantQuarantines POSTs unquarantine for every blocked or
-// quarantined host on the escrow. Restarting every versiond replica makes
-// heartbeat POSTs 503, and HTTP 503 quarantine lasts 60 minutes.
+// ClearGatewayParticipantQuarantines lifts the cutoff of every participant on the escrow. Restarting every versiond replica fails requests, and the limiter cuts those hosts off.
 func ClearGatewayParticipantQuarantines(t *testing.T, client *http.Client, gatewayURL, adminAPIKey, escrowID string) {
 	t.Helper()
 	if client == nil {
 		client = HTTPClient()
 	}
 	var body adminParticipantsBody
-	require.NoError(t, getGatewayJSON(t, client, gatewayURL+"/v1/admin/devshards/"+escrowID+"/participants", adminAPIKey, &body))
+	require.NoError(t, getGatewayJSONWithKey(client, strings.TrimRight(gatewayURL, "/")+"/v1/admin/devshards/"+escrowID+"/participants", adminAPIKey, &body))
+	require.NotEmpty(t, body.Participants, "escrow %s lists no participants", escrowID)
 	cleared := 0
-	for _, p := range body.Participants {
-		if p.AvailableForCapacity && !p.Quarantined && !p.Blocked {
+	for _, participantKey := range body.Participants {
+		err := PostGatewayJSON(client, strings.TrimRight(gatewayURL, "/")+"/v1/admin/participants/unquarantine", adminAPIKey, map[string]string{
+			"participant_key": participantKey,
+		}, nil)
+		var statusErr *GatewayStatusError
+		if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusNotFound {
 			continue
 		}
-		require.NoError(t, PostGatewayJSON(client, gatewayURL+"/v1/admin/participants/unquarantine", adminAPIKey, map[string]string{
-			"participant_key": p.ParticipantKey,
-		}, nil))
+		require.NoError(t, err)
 		cleared++
 	}
-	if cleared > 0 {
-		t.Logf("citest: cleared %d participant quarantine(s) after versiond restart", cleared)
-	}
+	t.Logf("citest: cleared the cutoff of %d tracked participant(s) after versiond restart", cleared)
 }
 
 // RestartService stops and starts a compose service without removing volumes.
@@ -304,7 +115,7 @@ func WaitVersiondSessionHealthy(t *testing.T, stack *Stack, cfg *config.File, ep
 // Finished/validated/timed_out/challenged rows stay in the live map until
 // auto-seal (default every 150 nonces), so live_inferences is not a settle
 // signal. Only pending/started gate settle: those still hold a reservation.
-func WaitGatewaySessionSettled(t *testing.T, client *http.Client, gatewayURL, adminAPIKey string) GatewaySessionSnapshot {
+func WaitGatewaySessionSettled(t *testing.T, client *http.Client, gatewayURL, adminAPIKey, escrowID string) GatewaySessionSnapshot {
 	t.Helper()
 	// Cover escrow refusal_timeout (60s in testenv) plus vote round-trip after
 	// hosts recover; a stranded reservation cannot look "quiet" forever.
@@ -314,24 +125,24 @@ func WaitGatewaySessionSettled(t *testing.T, client *http.Client, gatewayURL, ad
 	var prev *GatewaySessionSnapshot
 	stable := 0
 	ok := AssertEventually(t, wait, tick, func() bool {
-		snap := GetGatewaySessionSnapshot(t, client, gatewayURL, adminAPIKey)
-		if snap.OpenHolds > 0 {
+		snapshot := GetGatewaySessionSnapshot(t, client, gatewayURL, adminAPIKey, escrowID)
+		if snapshot.OpenHolds > 0 {
 			stable = 0
-		} else if prev != nil && gatewaySessionLedgerQuiet(*prev, snap) {
+		} else if prev != nil && gatewaySessionLedgerQuiet(*prev, snapshot) {
 			stable++
 		} else {
 			stable = 0
 		}
-		cur := snap
+		cur := snapshot
 		prev = &cur
 		return stable >= stablePolls
 	})
-	snap := GetGatewaySessionSnapshot(t, client, gatewayURL, adminAPIKey)
+	snapshot := GetGatewaySessionSnapshot(t, client, gatewayURL, adminAPIKey, escrowID)
 	if !ok {
 		t.Fatalf("session ledger did not settle in %s: live=%d open_holds=%d nonce=%d latest=%d balance=%d",
-			wait, snap.LiveInferences, snap.OpenHolds, snap.SessionNonce, snap.LatestNonce, snap.Balance)
+			wait, snapshot.LiveInferences, snapshot.OpenHolds, snapshot.SessionNonce, snapshot.LatestNonce, snapshot.Balance)
 	}
-	return snap
+	return snapshot
 }
 
 // gatewaySessionLedgerQuiet reports whether the restart-sensitive ledger is

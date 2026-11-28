@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -28,16 +29,18 @@ import (
 	"devshard/logging"
 	"devshard/transport"
 	"devshard/types"
+	"devshard/user"
 )
 
-// The Retry-After a shard without room answers with, and how a host's text is cut down for a client. See README.md, "Errors and statuses".
+// The Retry-After a shard without room answers with, the non-standard status for a request whose client left before the gateway answered, and how a host's text is cut down for a client. See README.md, "Errors and statuses".
 const (
-	noHostRetryAfter       = time.Second
-	requestCapRetryAfter   = 30 * time.Second
-	maxHostExcerptBytes    = 512
-	noHostExcerpt          = ""
-	invalidUTF8Replacement = ""
-	unprintableReplacement = ' '
+	statusClientClosedRequest = 499
+	noHostRetryAfter          = time.Second
+	requestCapRetryAfter      = 30 * time.Second
+	maxHostExcerptBytes       = 512
+	noHostExcerpt             = ""
+	invalidUTF8Replacement    = ""
+	unprintableReplacement    = ' '
 )
 
 var (
@@ -51,6 +54,8 @@ var (
 
 	ErrEnvAPIKey = errors.New("an API key set through " + env.APIKeysVariable + " cannot be created or revoked here")
 
+	ErrNULCharacter = errors.New("an API key and its label must not contain a NUL character")
+
 	ErrPrivateKeyEnvRequired = errors.New("private_key_env is required; a raw private_key is not accepted")
 
 	ErrDevshardExists = errors.New("devshard already registered")
@@ -58,6 +63,8 @@ var (
 	ErrDevshardNotActivatable = errors.New("devshard cannot be activated")
 
 	ErrInvalidEscrowID = errors.New("escrow id is not a chain escrow id")
+
+	errGatewayStopping = errors.New("gateway is stopping")
 )
 
 type hostBodyRefusedError struct{ refusal string }
@@ -192,6 +199,8 @@ func statusForError(err error) int {
 		return http.StatusServiceUnavailable
 	}
 	switch {
+	case errors.Is(err, user.ErrInferenceCompletionPending):
+		return http.StatusServiceUnavailable
 	case errors.Is(err, scheduler.ErrEscrowGone):
 		return http.StatusConflict
 	case errors.Is(err, engine.ErrStopped), errors.Is(err, registry.ErrClosed):
@@ -245,6 +254,9 @@ func writeControlFailure(w http.ResponseWriter, err error) bool {
 func limiterRefusal(err error) (label string, refused bool) {
 	if noLiveWeight(err) {
 		return limits.RejectionNoLiveWeight, true
+	}
+	if errors.Is(err, context.Canceled) {
+		return limits.RejectionClientGone, true
 	}
 	if throttled, ours := rateLimited(err); ours {
 		return throttled.Label(), true
@@ -314,7 +326,7 @@ func (s *Server) writeErrorUnder(w http.ResponseWriter, err error, configuration
 		w.Header().Set("Retry-After", strconv.FormatInt(seconds, 10))
 	case chainUnreadable(err):
 		w.Header().Set("Retry-After", strconv.FormatInt(int64(chain.DefaultObserverPollInterval.Seconds()), 10))
-	case modelUnavailable(err), outOfFunds(err):
+	case modelUnavailable(err), outOfFunds(err), errors.Is(err, user.ErrInferenceCompletionPending):
 		w.Header().Set("Retry-After", strconv.FormatInt(int64(escrow.TickInterval.Seconds()), 10))
 	case hostsUnavailable(err), noLiveWeight(err):
 		baseMS := configuration.Limits.HostCutoff.BaseMS

@@ -33,7 +33,7 @@ func TestMixedFleetNoProxy(t *testing.T) {
 	client := harness.GatewayChatClient()
 	t.Cleanup(func() {
 		if t.Failed() {
-			harness.DumpComposeLogs(t, stack, "devshardctl", "versiond-0", "versiond-1", "versiond-router", "mock-openai")
+			harness.DumpComposeLogs(t, stack, "gateway", "versiond-0", "versiond-1", "versiond-router", "mock-openai")
 		}
 	})
 	harness.WaitStackHealthy(t, stack, eps)

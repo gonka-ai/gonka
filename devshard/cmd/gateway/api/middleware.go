@@ -171,24 +171,23 @@ func (s *Server) keyGates() *keyGates {
 	return built
 }
 
-// disabled is the operator kill switch; alwaysOn routes stay reachable. See operations.md, "The kill switch".
-func (s *Server) disabled(next http.HandlerFunc) http.HandlerFunc {
+func (s *Server) killSwitch(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		modes := s.config.Load().Modes
-		if !modes.Disabled {
+		if modes.Enabled {
 			next(w, r)
 			return
 		}
-		if redirect := strings.TrimSpace(modes.DisabledRedirectURL); redirect != "" {
+		if redirect := strings.TrimSpace(modes.OffRedirectURL); redirect != "" {
 			w.Header().Set("Location", redirect)
 			writeJSON(w, http.StatusPermanentRedirect, map[string]any{
 				"status":  http.StatusPermanentRedirect,
-				"message": modes.DisabledMessage,
+				"message": modes.OffMessage,
 				"new_url": redirect,
 			})
 			return
 		}
-		message := strings.TrimSpace(modes.DisabledMessage)
+		message := strings.TrimSpace(modes.OffMessage)
 		if message == "" {
 			message = "gateway is disabled"
 		}

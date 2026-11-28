@@ -9,6 +9,7 @@ import (
 // RequestLine is what a finished, throttled, unread or uncached request can no longer be asked, read on the handler goroutine.
 type RequestLine struct {
 	RequestID     string
+	TraceID       string
 	Model         string
 	APIKeyID      string
 	EscrowID      string

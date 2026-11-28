@@ -13,7 +13,7 @@ import (
 	"devshard/logging"
 )
 
-func bootConfiguration(ctx context.Context, values env.Values, gatewayStore *store.Store) (*config.Config, error) {
+func bootConfiguration(ctx context.Context, values env.Values, gatewayStore store.Store) (*config.Config, error) {
 	overrides, err := gatewayStore.LoadOverrides(ctx)
 	if err != nil {
 		return nil, err

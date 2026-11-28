@@ -30,7 +30,7 @@ func TestLoadReturnsNilForUnsetVariables(t *testing.T) {
 func TestLoadParsesTypedValues(t *testing.T) {
 	t.Setenv("DEVSHARD_PORT", "9191")
 	t.Setenv("DEVSHARD_ESCROW_ROTATION_ENABLED", "true")
-	t.Setenv("DEVSHARD_GATEWAY_DISABLED", "true")
+	t.Setenv("DEVSHARD_GATEWAY_ENABLED", "false")
 	t.Setenv("DEVSHARD_TX_FEE_AMOUNT", "500")
 	t.Setenv("GATEWAY_PERF_EWMA_HALFLIFE_SECONDS", "900")
 	t.Setenv("GATEWAY_CAPTURE_SAMPLE_RATE", "0.25")
@@ -46,8 +46,8 @@ func TestLoadParsesTypedValues(t *testing.T) {
 	if values.RotationEnabled == nil || *values.RotationEnabled != true {
 		t.Fatalf("RotationEnabled = %v, want true", values.RotationEnabled)
 	}
-	if values.Disabled == nil || *values.Disabled != true {
-		t.Fatalf("Disabled = %v, want true", values.Disabled)
+	if values.Enabled == nil || *values.Enabled != false {
+		t.Fatalf("Enabled = %v, want false", values.Enabled)
 	}
 	if values.TxFeeAmount == nil || *values.TxFeeAmount != 500 {
 		t.Fatalf("TxFeeAmount = %v, want 500", values.TxFeeAmount)
@@ -68,15 +68,15 @@ func TestLoadParsesTypedValues(t *testing.T) {
 //  2. Call `Load`.
 //  3. Assert the string value is trimmed and the blank int variable loads as unset (nil).
 func TestLoadWhitespaceIsTrimmedAndEmptyMeansUnset(t *testing.T) {
-	t.Setenv("DEVSHARD_GATEWAY_DISABLED_MESSAGE", "  gateway paused  ")
+	t.Setenv("DEVSHARD_GATEWAY_OFF_MESSAGE", "  gateway paused  ")
 	t.Setenv("DEVSHARD_TX_GAS_LIMIT", "   ")
 
 	values, err := Load()
 	if err != nil {
 		t.Fatalf("Load(): unexpected error: %v", err)
 	}
-	if values.DisabledMessage == nil || *values.DisabledMessage != "gateway paused" {
-		t.Fatalf("DisabledMessage = %v, want trimmed \"gateway paused\"", values.DisabledMessage)
+	if values.OffMessage == nil || *values.OffMessage != "gateway paused" {
+		t.Fatalf("OffMessage = %v, want trimmed \"gateway paused\"", values.OffMessage)
 	}
 	if values.TxGasLimit != nil {
 		t.Fatalf("TxGasLimit = %v, want nil for blank value", *values.TxGasLimit)
@@ -106,13 +106,35 @@ func TestLoadRejectsMalformedGatewayValuesWithVariableName(t *testing.T) {
 }
 
 // Test flow:
+//  1. Set each `_ENABLED` switch to a true spelling (`true`, `1`, `on`).
+//  2. Call `Load`.
+//  3. Assert each matching enabled field is set to true.
+func TestAnEnabledSwitchSetToTrueSetsTheEnabledField(t *testing.T) {
+	t.Setenv("DEVSHARD_GATEWAY_ENABLED", "true")
+	t.Setenv("DEVSHARD_GATEWAY_HOST_PING_ENABLED", "1")
+	t.Setenv("DEVSHARD_GATEWAY_RPC_STATS_ENABLED", "on")
+
+	values, err := Load()
+	if err != nil {
+		t.Fatalf("Load(): %v", err)
+	}
+	for name, field := range map[string]*bool{"Enabled": values.Enabled, "HostPingEnabled": values.HostPingEnabled, "HostRPCStatsEnabled": values.HostRPCStatsEnabled} {
+		if field == nil {
+			t.Errorf("%s is unset, want true from the enabled switch", name)
+		} else if !*field {
+			t.Errorf("%s = false, want true from the enabled switch", name)
+		}
+	}
+}
+
+// Test flow:
 //  1. Set deployed variables to values that are ignored or read as "use the default": unparsable, zero, or negative.
 //  2. Call `Load`.
 //  3. Assert `Load` succeeds and leaves each field unset, so the gateway's default applies as it always has.
 func TestAnUnusableValueIsIgnoredNotRefused(t *testing.T) {
 	for name, value := range map[string]string{
 		"DEVSHARD_PORT":                                    "eighty",
-		"DEVSHARD_GATEWAY_DISABLED":                        "maybe",
+		"DEVSHARD_GATEWAY_ENABLED":                         "maybe",
 		"DEVSHARD_TX_FEE_AMOUNT":                           "0",
 		"DEVSHARD_TX_POLL_INTERVAL_MS":                     "-5",
 		"DEVSHARD_STATS_SNAPSHOT_SECONDS":                  "0",
@@ -143,7 +165,7 @@ func TestAnUnusableValueIsIgnoredNotRefused(t *testing.T) {
 	}
 	for name, isSet := range map[string]bool{
 		"Port":                                values.Port != nil,
-		"Disabled":                            values.Disabled != nil,
+		"Enabled":                             values.Enabled != nil,
 		"TxFeeAmount":                         values.TxFeeAmount != nil,
 		"TxPollIntervalMS":                    values.TxPollIntervalMS != nil,
 		"NonceAccountingSnapshotSeconds":      values.NonceAccountingSnapshotSeconds != nil,
@@ -200,11 +222,50 @@ func TestTheRenamedGatewaySpellingsAreNotRead(t *testing.T) {
 }
 
 // Test flow:
-//  1. Set every host-ping and height-sync variable, in the deployed spellings (durations, on/off/yes).
+//  1. Set every host RPC-stats variable, with the switch as `off` and the durations as `15s` and `4s`.
+//  2. Call `Load`.
+//  3. Assert each loads, the durations converted to milliseconds.
+//  4. Set the interval to `0s` and the concurrency to `0`, call `Load` again, and assert both are ignored.
+func TestTheHostRPCStatsVariablesAreRead(t *testing.T) {
+	t.Setenv("DEVSHARD_GATEWAY_RPC_STATS_ENABLED", "off")
+	t.Setenv("DEVSHARD_GATEWAY_RPC_STATS_INTERVAL", "15s")
+	t.Setenv("DEVSHARD_GATEWAY_RPC_STATS_TIMEOUT", "4s")
+	t.Setenv("DEVSHARD_GATEWAY_RPC_STATS_CONCURRENCY", "8")
+
+	values, err := Load()
+	if err != nil {
+		t.Fatalf("Load(): %v", err)
+	}
+	if values.HostRPCStatsEnabled == nil || *values.HostRPCStatsEnabled {
+		t.Errorf("HostRPCStatsEnabled = %v, want false from off", values.HostRPCStatsEnabled)
+	}
+	if values.HostRPCStatsIntervalMS == nil || *values.HostRPCStatsIntervalMS != 15_000 {
+		t.Errorf("HostRPCStatsIntervalMS = %v, want 15000", values.HostRPCStatsIntervalMS)
+	}
+	if values.HostRPCStatsTimeoutMS == nil || *values.HostRPCStatsTimeoutMS != 4_000 {
+		t.Errorf("HostRPCStatsTimeoutMS = %v, want 4000", values.HostRPCStatsTimeoutMS)
+	}
+	if values.HostRPCStatsConcurrency == nil || *values.HostRPCStatsConcurrency != 8 {
+		t.Errorf("HostRPCStatsConcurrency = %v, want 8", values.HostRPCStatsConcurrency)
+	}
+
+	t.Setenv("DEVSHARD_GATEWAY_RPC_STATS_INTERVAL", "0s")
+	t.Setenv("DEVSHARD_GATEWAY_RPC_STATS_CONCURRENCY", "0")
+	values, err = Load()
+	if err != nil {
+		t.Fatalf("Load(): %v", err)
+	}
+	if values.HostRPCStatsIntervalMS != nil || values.HostRPCStatsConcurrency != nil {
+		t.Errorf("interval %v and concurrency %v, want both ignored so the defaults apply", values.HostRPCStatsIntervalMS, values.HostRPCStatsConcurrency)
+	}
+}
+
+// Test flow:
+//  1. Set every host-ping and height-sync variable, in the deployed spellings (durations, on/off/yes/no).
 //  2. Call `Load`.
 //  3. Assert each loads, the durations converted to milliseconds.
 func TestTheHostPingAndHeightSyncVariablesAreReadUnderTheirDeployedNames(t *testing.T) {
-	t.Setenv("DEVSHARD_GATEWAY_HOST_PING_DISABLED", "yes")
+	t.Setenv("DEVSHARD_GATEWAY_HOST_PING_ENABLED", "no")
 	t.Setenv("DEVSHARD_GATEWAY_HOST_PING_INTERVAL", "15s")
 	t.Setenv("DEVSHARD_GATEWAY_HOST_PING_TIMEOUT", "2s")
 	t.Setenv("DEVSHARD_GATEWAY_HOST_PING_CONCURRENCY", "8")
@@ -217,8 +278,8 @@ func TestTheHostPingAndHeightSyncVariablesAreReadUnderTheirDeployedNames(t *test
 	if err != nil {
 		t.Fatalf("Load(): %v", err)
 	}
-	if values.HostPingDisabled == nil || !*values.HostPingDisabled {
-		t.Errorf("HostPingDisabled = %v, want true from yes", values.HostPingDisabled)
+	if values.HostPingEnabled == nil || *values.HostPingEnabled {
+		t.Errorf("HostPingEnabled = %v, want false from no", values.HostPingEnabled)
 	}
 	if values.HostPingIntervalMS == nil || *values.HostPingIntervalMS != 15_000 {
 		t.Errorf("HostPingIntervalMS = %v, want 15000 from the duration 15s", values.HostPingIntervalMS)

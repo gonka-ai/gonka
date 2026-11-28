@@ -12,7 +12,7 @@ import (
 	"devshard/cmd/gateway/api"
 	"devshard/cmd/gateway/config"
 	"devshard/cmd/gateway/env"
-	"devshard/cmd/gateway/store"
+	"devshard/cmd/gateway/store/sqlite"
 )
 
 func bootStepNames(steps []bootStep) []string {
@@ -100,9 +100,9 @@ func servableGateway(t *testing.T, port int) *gateway {
 	if err != nil {
 		t.Fatalf("resolveStorageDir() = %v, want nil", err)
 	}
-	gatewayStore, err := store.Open(storageDir)
+	gatewayStore, err := sqlite.Open(storageDir)
 	if err != nil {
-		t.Fatalf("store.Open() = %v, want nil", err)
+		t.Fatalf("sqlite.Open() = %v, want nil", err)
 	}
 	composed, err := compose(t.Context(), values, storageDir, gatewayStore, sessionsReading(gatewayStore, storageDir, chainWithoutADial{}))
 	if err != nil {

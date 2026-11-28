@@ -31,8 +31,6 @@ type RunnerConfig struct {
 	KeepStack       bool
 	LoadDataset     string
 	MetricsInterval time.Duration
-	// GatewayDriver overrides the scenario's topology.gateway when set.
-	GatewayDriver config.GatewayDriver
 	// StrictXFail fails the run when a known_bug case passes (XPASS).
 	StrictXFail bool
 	// CheckHistory is the file of outcomes that span runs (see recordCheckHistory); empty means check-history.json beside OutputDir.
@@ -48,7 +46,6 @@ type RunResult struct {
 	GatewayURL         string
 	Allocations        map[string]uint64
 	MLStats            map[string]MLNodeStats
-	GatewayState       GatewayStateSizes
 	Metrics            MetricsSummary
 	Events             []EventRecord
 	CPUProfiles        []CPUProfileResult
@@ -66,16 +63,6 @@ type MLNodeStats struct {
 	ReplayHits          uint64 `json:"replay_hits"`
 	ReplayMisses        uint64 `json:"replay_misses"`
 	Error               string `json:"error,omitempty"`
-}
-
-type GatewayStateSizes struct {
-	Diffs           int     `json:"diffs"`
-	DiffsBytes      int64   `json:"diffs_bytes"`
-	DiffsMB         float64 `json:"diffs_mb"`
-	SignatureNonces int     `json:"signature_nonces"`
-	NonceStates     int     `json:"nonce_states"`
-	PendingTxs      int     `json:"pending_txs"`
-	AppliedTxKeys   int     `json:"applied_tx_keys"`
 }
 
 // AssertionResult is one human-readable load-test assertion outcome.
@@ -153,13 +140,6 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	if err != nil {
 		return RunResult{}, err
 	}
-	if err := opts.GatewayDriver.Validate(); err != nil {
-		return RunResult{}, err
-	}
-	if opts.GatewayDriver != "" {
-		scenario.Topology.Gateway = opts.GatewayDriver
-	}
-	driver := scenario.Topology.Gateway
 	var replaySelector *replay.Selector
 	var replayModels []string
 	if opts.LoadDataset != "" {
@@ -228,7 +208,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		return RunResult{}, err
 	}
 	const maxStartAttempts = 3
-	log.Printf("loadtest: stage=stack_start scenario=%s gateway=%s", scenario.Scenario, gatewayDriverName(driver))
+	log.Printf("loadtest: stage=stack_start scenario=%s", scenario.Scenario)
 	log.Printf("loadtest: peer_rpc_transport=h2 endpoint=versiond-router:8080 grpc=true")
 	for attempt := 1; attempt <= maxStartAttempts; attempt++ {
 		project = "loadtest-" + strconv.FormatInt(time.Now().UnixNano(), 36)
@@ -269,21 +249,8 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	if err != nil {
 		return RunResult{}, err
 	}
-	result.GatewayURL = fmt.Sprintf("http://127.0.0.1:%d", cfg.Devshardctl.Port)
-	accountingURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Devshardctl.StatsPort)
-	stateGatewayURL := result.GatewayURL
-	if replaySelector != nil || len(scenario.RequestModels()) > 1 {
-		// Replay and multi-model stacks configure Gateway through DEVSHARDS_JSON, so even a
-		// single dataset model uses the multi-DevShard debug route.
-		stateGatewayURL = scopedGatewayURL(result.GatewayURL, config.PrimaryEscrowID(cfg))
-	}
-	debugGatewayURL := stateGatewayURL
-	aggregateDebug := scenario.Gateway.EscrowRotation.Enabled || driver.IsGateway()
-	if aggregateDebug {
-		// Rotation adds runtimes while the test is running. The orphan check
-		// discovers and inspects all of them through the Gateway root.
-		debugGatewayURL = result.GatewayURL
-	}
+	result.GatewayURL = fmt.Sprintf("http://127.0.0.1:%d", cfg.Gateway.Port)
+	accountingURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Gateway.StatsPort)
 	log.Printf("loadtest: waiting for gateway at %s", result.GatewayURL)
 	if err := waitGateway(ctx, result.GatewayURL); err != nil {
 		_ = writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath, scenario.Diagnostics.LogTail())
@@ -299,11 +266,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		}
 	}
 	rotationModels := rotationModelIDs(cfg, replayModels, scenario)
-	applySettings := applyGatewayScenarioSettings
-	if driver.IsGateway() {
-		applySettings = applyCmdGatewayScenarioSettings
-	}
-	if err := applySettings(ctx, result.GatewayURL, apiKey, scenario, rotationModels); err != nil {
+	if err := applyGatewayScenarioSettings(ctx, result.GatewayURL, apiKey, scenario, rotationModels); err != nil {
 		_ = writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath, scenario.Diagnostics.LogTail())
 		return RunResult{}, err
 	}
@@ -374,7 +337,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	if err != nil {
 		return RunResult{}, err
 	}
-	inputs := RunInputs{Gateway: resolvedDriver(driver), Started: summary.StartedAt, Allocations: allocations, InitialEscrowIDs: sortedKeySet(initialEscrowIDs), Burns: burns}
+	inputs := RunInputs{Started: summary.StartedAt, Allocations: allocations, InitialEscrowIDs: sortedKeySet(initialEscrowIDs), Burns: burns}
 	for _, host := range cfg.Hosts {
 		inputs.Hosts = append(inputs.Hosts, InvariantHost{ID: host.ID, Participant: participantAddress(cfg, host)})
 	}
@@ -382,7 +345,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		inputs.Started = invariants.started
 	}
 	if scenario.Assertions.EscrowRotation.RequireNewEscrow {
-		inputs.CurrentEscrowIDs, err = fetchGatewayDevshardIDs(ctx, debugGatewayURL, apiKey)
+		inputs.CurrentEscrowIDs, err = fetchGatewayDevshardIDs(ctx, result.GatewayURL, apiKey)
 		if err != nil {
 			inputs.CurrentEscrowError = err.Error()
 		}
@@ -390,7 +353,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	if scenario.Assertions.Devshard.NoOrphanedWork {
 		judge := orphanJudgeFor(scenario, inputs, result.Events)
 		judge.ChainURL = fmt.Sprintf("http://127.0.0.1:%d", cfg.MockChain.TestenvPort)
-		poll, terminal, _ := waitForNoOrphanedWork(ctx, debugGatewayURL, apiKey, judge, aggregateDebug)
+		poll, terminal, _ := waitForNoOrphanedWork(ctx, result.GatewayURL, apiKey, judge)
 		inputs.Orphans, result.Terminal = &poll, terminal
 	}
 	if accountingEnabled(scenario.Assertions.Accounting) {
@@ -440,19 +403,6 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		}
 		log.Printf("loadtest: final Compose log collection failed: %v", err)
 	}
-	if driver.IsGateway() {
-		log.Printf("loadtest: gateway state sizes skipped: cmd/gateway serves no /v1/debug/state-sizes")
-	} else {
-		gatewayState, stateErr := fetchGatewayStateSizes(ctx, stateGatewayURL, apiKey)
-		if stateErr == nil {
-			result.GatewayState = gatewayState
-			if err := writeGatewayStateSizes(opts.OutputDir, gatewayState); err != nil && assertionErr == nil {
-				return RunResult{}, err
-			}
-		} else if assertionErr == nil {
-			return RunResult{}, stateErr
-		}
-	}
 	mlStats, statsErr := fetchMLNodeStats(ctx, cfg.MockDapi.HTTPPort)
 	if statsErr == nil {
 		result.MLStats = mlStats
@@ -462,7 +412,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	} else if assertionErr == nil {
 		return RunResult{}, statsErr
 	}
-	_ = writeGatewayInferences(ctx, stateGatewayURL, apiKey, opts.OutputDir)
+	_ = writeGatewayInferences(ctx, result.GatewayURL, apiKey, opts.OutputDir)
 	if assertionErr != nil {
 		return result, assertionErr
 	}
@@ -472,68 +422,8 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	return result, nil
 }
 
-func applyGatewayScenarioSettings(ctx context.Context, gatewayURL, apiKey string, scenario Scenario, rotationModels []string) error {
-	duration := scenario.SecondaryWaitAfterWinner()
-
-	settings := map[string]any{
-		"redundancy": map[string]any{
-			"secondary_wait_after_winner_ms": duration.Milliseconds(),
-		},
-	}
-	throttle := map[string]any{}
-	for name, value := range scenario.Gateway.ParticipantThrottle.settings() {
-		if value == "" {
-			continue
-		}
-		quarantine, err := time.ParseDuration(value)
-		if err != nil || quarantine < time.Millisecond {
-			return fmt.Errorf("invalid gateway.participant_throttle.%s: %q", name, value)
-		}
-		throttle[name+"_ms"] = quarantine.Milliseconds()
-	}
-	if len(throttle) > 0 {
-		settings["participant_throttle"] = throttle
-	}
-	if scenario.Gateway.EscrowRotation.Enabled {
-		rotation := scenario.Gateway.EscrowRotation
-		models, err := rotationModelSettings(rotation, rotationModels)
-		if err != nil {
-			return err
-		}
-		settings["escrow_rotation"] = map[string]any{
-			"enabled":            true,
-			"settlement_enabled": rotation.SettlementEnabled,
-			"pre_poc_blocks":     rotation.PrePoCBlocks,
-			"models":             models,
-		}
-	}
-
-	body, err := json.Marshal(settings)
-	if err != nil {
-		return fmt.Errorf("marshal gateway settings: %w", err)
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, gatewayURL+"/v1/admin/settings", strings.NewReader(string(body)))
-	if err != nil {
-		return fmt.Errorf("create gateway settings request: %w", err)
-	}
-	request.Header.Set("Content-Type", "application/json")
-	if apiKey != "" {
-		request.Header.Set("Authorization", "Bearer "+apiKey)
-	}
-	response, err := (&http.Client{Timeout: 5 * time.Second}).Do(request)
-	if err != nil {
-		return fmt.Errorf("apply gateway settings: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		reply, _ := io.ReadAll(response.Body)
-		return fmt.Errorf("apply gateway settings returned %s: %s", response.Status, strings.TrimSpace(string(reply)))
-	}
-	return nil
-}
-
 // rotationModelSettings expands the scenario rotation into one model entry per rotated model, with
-// the per-model settlement overrides; both drivers take this shape.
+// the per-model settlement overrides.
 func rotationModelSettings(rotation GatewayEscrowRotation, rotationModels []string) ([]map[string]any, error) {
 	overrides := map[string]*bool{}
 	for _, model := range rotation.Models {
@@ -621,7 +511,6 @@ func writeRunnerConfig(testenvDir, workDir string, scenario Scenario, profiles m
 		return err
 	}
 	cfg.Versiond.Mode = scenario.Topology.VersiondMode
-	cfg.Devshardctl.Driver = scenario.Topology.Gateway
 	cfg.Versiond.DisablePeriodicSnapshots = scenario.Diagnostics.DisablePeriodicSnapshots
 	cfg.Versiond.EnableContentionProfiles = scenario.Diagnostics.ContentionProfiles
 	cfg.Postgres.PerParticipant = scenario.Topology.Storage == "per_participant"
@@ -766,7 +655,7 @@ func configureParticipants(cfg *config.File, participants int) {
 func randomizeTestenv(cfg *config.File) error {
 	ports := []*int{
 		&cfg.MockChain.GRPCPort, &cfg.MockChain.RPCPort, &cfg.MockChain.TestenvPort,
-		&cfg.MockDapi.GRPCPort, &cfg.MockDapi.HTTPPort, &cfg.Devshardctl.Port, &cfg.Devshardctl.StatsPort,
+		&cfg.MockDapi.GRPCPort, &cfg.MockDapi.HTTPPort, &cfg.Gateway.Port, &cfg.Gateway.StatsPort,
 		&cfg.VersiondRouter.Port,
 	}
 	for _, port := range ports {
@@ -780,11 +669,11 @@ func randomizeTestenv(cfg *config.File) error {
 	base := fmt.Sprintf("172.31.%d", segment)
 	cfg.Network.BaseIP = base
 	cfg.Network.Subnet = base + ".0/24"
-	cfg.VersiondRouter.IP = ""
-	cfg.Devshardctl.IP = ""
-	cfg.Postgres.IP = ""
+	cfg.VersiondRouter.IP = composeAssignedIP
+	cfg.Gateway.IP = composeAssignedIP
+	cfg.Postgres.IP = composeAssignedIP
 	for i := range cfg.Hosts {
-		cfg.Hosts[i].IP = ""
+		cfg.Hosts[i].IP = composeAssignedIP
 	}
 	cfg.ApplyDefaults()
 	return nil
@@ -975,29 +864,6 @@ func writeMLNodeStats(outputDir string, stats map[string]MLNodeStats) error {
 	return os.WriteFile(filepath.Join(outputDir, "ml-stats.json"), append(body, '\n'), 0o644)
 }
 
-func fetchGatewayStateSizes(ctx context.Context, gatewayURL, apiKey string) (GatewayStateSizes, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, gatewayURL+"/v1/debug/state-sizes", nil)
-	if err != nil {
-		return GatewayStateSizes{}, err
-	}
-	if apiKey != "" {
-		request.Header.Set("Authorization", "Bearer "+apiKey)
-	}
-	response, err := (&http.Client{Timeout: 5 * time.Second}).Do(request)
-	if err != nil {
-		return GatewayStateSizes{}, err
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return GatewayStateSizes{}, fmt.Errorf("gateway state sizes endpoint returned %s", response.Status)
-	}
-	var sizes GatewayStateSizes
-	if err := json.NewDecoder(response.Body).Decode(&sizes); err != nil {
-		return GatewayStateSizes{}, err
-	}
-	return sizes, nil
-}
-
 // scopedGatewayURL selects a runtime in multi-DevShard mode for diagnostic
 // endpoints. Client traffic intentionally keeps using the Gateway root URL,
 // which performs model-based routing.
@@ -1008,14 +874,6 @@ func scopedGatewayURL(gatewayURL, escrowID string) string {
 		return base
 	}
 	return base + "/devshard/" + id
-}
-
-func writeGatewayStateSizes(outputDir string, sizes GatewayStateSizes) error {
-	body, err := json.MarshalIndent(sizes, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(outputDir, "gateway-state.json"), append(body, '\n'), 0o644)
 }
 
 // assertRun judges the request, mock ML, escrow rotation and drain checks from the run's summary
@@ -1150,7 +1008,7 @@ type debugInferencesResponse struct {
 	Inferences json.RawMessage `json:"inferences"`
 }
 
-// decodeDebugInferences reads the drain check's view of either driver's debug inference records.
+// decodeDebugInferences reads the drain check's view of the debug inference records.
 func decodeDebugInferences(raw json.RawMessage) (map[string]debugInference, error) {
 	records, err := decodeInferenceRecords(raw)
 	if err != nil {
@@ -1224,9 +1082,8 @@ type orphanPoll struct {
 }
 
 // waitForNoOrphanedWork polls until judgeOrphans reaches a verdict or the deadline passes.
-func waitForNoOrphanedWork(ctx context.Context, gatewayURL, apiKey string, judge orphanJudge, aggregateRuntimeState ...bool) (orphanPoll, TerminalSummary, error) {
+func waitForNoOrphanedWork(ctx context.Context, gatewayURL, apiKey string, judge orphanJudge) (orphanPoll, TerminalSummary, error) {
 	log.Printf("loadtest: stage=devshard_orphan_check_start timeout=%s max_ghost_rate=%.2f%%", judge.Timeout, judge.MaxGhostRate*100)
-	aggregate := len(aggregateRuntimeState) > 0 && aggregateRuntimeState[0]
 	deadline := time.NewTimer(judge.Timeout)
 	defer deadline.Stop()
 	ticker := time.NewTicker(time.Second)
@@ -1242,7 +1099,7 @@ func waitForNoOrphanedWork(ctx context.Context, gatewayURL, apiKey string, judge
 				judge.Escrows = escrowsByID(escrows.Escrows)
 			}
 		}
-		snapshot, err := fetchOrphanSnapshot(ctx, client, gatewayURL, apiKey, aggregate)
+		snapshot, err := fetchOrphanSnapshot(ctx, client, gatewayURL, apiKey)
 		if err == nil {
 			poll.Last, poll.ReadError = &snapshot, ""
 		} else {
@@ -1321,14 +1178,10 @@ func judgeOrphans(poll orphanPoll, judge orphanJudge) (TerminalSummary, bool, er
 	return state, true, fmt.Errorf("DevShard still has orphaned inference work after %s (%s)", judge.Timeout, details)
 }
 
-func fetchOrphanSnapshot(ctx context.Context, client *http.Client, gatewayURL, apiKey string, aggregate bool) (orphanSnapshot, error) {
-	runtimes := []debugRuntime{{url: gatewayURL, active: true}}
-	if aggregate {
-		var err error
-		runtimes, err = fetchDebugRuntimes(ctx, gatewayURL, apiKey)
-		if err != nil {
-			return orphanSnapshot{}, err
-		}
+func fetchOrphanSnapshot(ctx context.Context, client *http.Client, gatewayURL, apiKey string) (orphanSnapshot, error) {
+	runtimes, err := fetchDebugRuntimes(ctx, gatewayURL, apiKey)
+	if err != nil {
+		return orphanSnapshot{}, err
 	}
 	snapshot := orphanSnapshot{At: time.Now().UTC()}
 	for _, runtime := range runtimes {

@@ -41,10 +41,10 @@ func TestTimeoutEvidence(t *testing.T) {
 		harness.SetExecutorFault(t, stack, cfg, harness.ExecutorFaultDropPayload, false)
 		harness.SetExecutorFault(t, stack, cfg, harness.ExecutorFaultForgeChallenge, false)
 		if t.Failed() {
-			harness.DumpComposeLogs(t, stack, "devshardctl", "mock-openai", "versiond-0", "versiond-1", "versiond-2", "versiond-3")
+			harness.DumpComposeLogs(t, stack, "gateway", "mock-openai", "versiond-0", "versiond-1", "versiond-2", "versiond-3")
 		}
 	})
-	harness.PatchGatewayRedundancySpeedPolicy(t, client, eps.GatewayHTTP, "legacy")
+	escrowID := harness.GetGatewayEscrowID(t, client, eps.GatewayHTTP)
 
 	mlUnavailable := http.StatusServiceUnavailable
 	for _, sc := range []struct {
@@ -63,8 +63,8 @@ func TestTimeoutEvidence(t *testing.T) {
 			harness.PostGatewayChatCompletionEventually(t, client, eps.GatewayHTTP, adminKey,
 				timeoutEvidenceChat(cfg, "ready before "+sc.name), 3*time.Minute)
 
-			before := harness.GetGatewayInferences(t, client, eps.GatewayHTTP, adminKey)
-			beforeLedger := harness.GetGatewayLedgerSnapshot(t, client, eps.GatewayHTTP, adminKey)
+			before := harness.GetGatewayDebugInferences(t, client, eps.GatewayHTTP, adminKey, escrowID)
+			beforeLedger := harness.GetGatewayLedgerSnapshot(t, client, eps.GatewayHTTP, adminKey, escrowID)
 			for _, f := range sc.faults {
 				harness.SetExecutorFault(t, stack, cfg, f, true)
 			}
@@ -76,7 +76,7 @@ func TestTimeoutEvidence(t *testing.T) {
 			code := harness.PostGatewayChatExpectFailure(t, client, eps.GatewayHTTP, adminKey, timeoutEvidenceChat(cfg, sc.name))
 			t.Logf("citest: %s: gateway status %d", sc.name, code)
 
-			attempts := harness.NewGatewayInferences(before, harness.GetGatewayInferences(t, client, eps.GatewayHTTP, adminKey))
+			attempts := harness.NewGatewayInferences(before, harness.GetGatewayDebugInferences(t, client, eps.GatewayHTTP, adminKey, escrowID))
 			require.NotEmpty(t, attempts, "the failed chat must have started inferences")
 
 			harness.Step(t, "%s: wait for the timeout vote on %d attempt(s)", sc.name, len(attempts))
@@ -85,8 +85,8 @@ func TestTimeoutEvidence(t *testing.T) {
 				settled = func(status string) bool { return status != "pending" && status != "started" }
 			}
 			wait := time.Duration(4*(harness.TimeoutEvidenceRefusalTimeout+harness.TimeoutEvidenceExecutionTimeout))*time.Second + 2*time.Minute
-			final := harness.WaitGatewayInferencesSettle(t, client, eps.GatewayHTTP, adminKey, attempts, wait, settled)
-			afterLedger := harness.GetGatewayLedgerSnapshot(t, client, eps.GatewayHTTP, adminKey)
+			final := harness.WaitGatewayInferencesSettle(t, client, eps.GatewayHTTP, adminKey, escrowID, attempts, wait, settled)
+			afterLedger := harness.GetGatewayLedgerSnapshot(t, client, eps.GatewayHTTP, adminKey, escrowID)
 
 			for _, f := range sc.faults {
 				harness.SetExecutorFault(t, stack, cfg, f, false)

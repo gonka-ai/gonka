@@ -23,7 +23,7 @@ func bootForcedUpstreamStack(t *testing.T, prefix string) (*harness.Stack, *conf
 	stack, cfg, eps := harness.BootAdversarialStack(t, prefix)
 	t.Cleanup(func() {
 		if t.Failed() {
-			harness.DumpComposeLogs(t, stack, "devshardctl", "versiond-0", "versiond-1", "mock-openai")
+			harness.DumpComposeLogs(t, stack, "gateway", "versiond-0", "versiond-1", "mock-openai")
 		}
 	})
 	return stack, cfg, eps

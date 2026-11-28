@@ -26,12 +26,13 @@ func TestHAStaleStandbyCatchupIdempotent(t *testing.T) {
 	adminKey := harness.TestenvAdminAPIKey
 	t.Cleanup(func() {
 		if t.Failed() {
-			harness.DumpComposeLogs(t, stack, "devshardctl", "versiond-0", "versiond-1", "versiond-router")
+			harness.DumpComposeLogs(t, stack, "gateway", "versiond-0", "versiond-1", "versiond-router")
 		}
 	})
 
 	harness.WaitStackHealthy(t, stack, eps)
 	harness.WaitGatewayChatReady(t, chatClient, eps.GatewayHTTP, 3*time.Minute, stack)
+	escrowID := harness.GetGatewayEscrowID(t, nil, eps.GatewayHTTP)
 	version := cfg.Versiond.VersionName
 	harness.WaitGETOK(t, client, eps.RouterHTTP+"/"+version+"/healthz", 5*time.Minute, "devshardd health via router", stack)
 
@@ -48,11 +49,11 @@ func TestHAStaleStandbyCatchupIdempotent(t *testing.T) {
 		},
 		MaxTokens: 16,
 	})
-	snapN := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, adminKey)
-	require.NotEmpty(t, snapN.EscrowID)
-	require.Greater(t, snapN.LatestNonce, uint64(0), "expected durable nonce after warm chat")
+	snapshotAtNonceN := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, adminKey, escrowID)
+	require.NotEmpty(t, snapshotAtNonceN.EscrowID)
+	require.Greater(t, snapshotAtNonceN.LatestNonce, uint64(0), "expected durable nonce after warm chat")
 
-	escrowSessionURL := harness.RouterSessionURL(eps.RouterHTTP, version, snapN.EscrowID, "/mempool")
+	escrowSessionURL := harness.RouterSessionURL(eps.RouterHTTP, version, snapshotAtNonceN.EscrowID, "/mempool")
 	primaryUpstream := harness.RequireResponseHeader(t, client, escrowSessionURL, harness.StickyUpstreamHeader)
 	primaryHost := harness.HostIDForUpstream(cfg, primaryUpstream)
 	require.NotEmpty(t, primaryHost, "map escrow sticky upstream %q to host id", primaryUpstream)
@@ -60,7 +61,7 @@ func TestHAStaleStandbyCatchupIdempotent(t *testing.T) {
 	require.NotEmpty(t, survivorUpstream, "need a survivor distinct from primary %s", primaryUpstream)
 
 	harness.Step(t, "escrow %s sticky → %s (%s); survivor %s; advancing PG on primary",
-		snapN.EscrowID, primaryUpstream, primaryHost, survivorUpstream)
+		snapshotAtNonceN.EscrowID, primaryUpstream, primaryHost, survivorUpstream)
 
 	const advanceChats = 3
 	for i := 0; i < advanceChats; i++ {
@@ -72,9 +73,9 @@ func TestHAStaleStandbyCatchupIdempotent(t *testing.T) {
 			MaxTokens: 16,
 		})
 	}
-	snapAdvanced := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, adminKey)
-	harness.RequireGatewaySessionAdvanced(t, snapN, snapAdvanced)
-	require.Greater(t, snapAdvanced.LatestNonce, snapN.LatestNonce,
+	snapshotAdvanced := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, adminKey, escrowID)
+	harness.RequireGatewaySessionAdvanced(t, snapshotAtNonceN, snapshotAdvanced)
+	require.Greater(t, snapshotAdvanced.LatestNonce, snapshotAtNonceN.LatestNonce,
 		"primary chats must advance durable nonce beyond warm snapshot")
 
 	harness.Step(t, "stop sticky primary %s so catch-up lands on stale standby", primaryHost)
@@ -89,8 +90,8 @@ func TestHAStaleStandbyCatchupIdempotent(t *testing.T) {
 		},
 		MaxTokens: 16,
 	})
-	snapAfter := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, adminKey)
-	harness.RequireGatewaySessionAdvanced(t, snapAdvanced, snapAfter)
+	snapshotAfter := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, adminKey, escrowID)
+	harness.RequireGatewaySessionAdvanced(t, snapshotAdvanced, snapshotAfter)
 
 	harness.RequireNoDiffDuplicateKeyInLogs(t, stack, "versiond-0", "versiond-1")
 }

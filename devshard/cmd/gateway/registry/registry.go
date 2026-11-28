@@ -37,6 +37,7 @@ type Deps struct {
 	ServedBindings   servedBindingObserver
 	SweptVotes       sweptVoteObserver
 	PeerRPC          peerRPCAdoption
+	Completions      user.InferenceCompletionStore
 	Now              func() time.Time
 }
 
@@ -66,6 +67,7 @@ type Registry struct {
 	servedBindings   servedBindingObserver
 	sweptVotes       sweptVoteObserver
 	peerRPC          peerRPCAdoption
+	completions      user.InferenceCompletionStore
 	now              func() time.Time
 
 	live          atomic.Pointer[liveSet]
@@ -104,6 +106,7 @@ func New(deps Deps) *Registry {
 		servedBindings:   deps.ServedBindings,
 		sweptVotes:       deps.SweptVotes,
 		peerRPC:          deps.PeerRPC,
+		completions:      deps.Completions,
 		now:              deps.Now,
 		draining:         map[*escrowEntry]struct{}{},
 		listings:         map[*Listing]struct{}{},

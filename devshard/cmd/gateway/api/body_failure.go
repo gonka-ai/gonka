@@ -35,10 +35,10 @@ func bodyReadFailure(w http.ResponseWriter, err error) error {
 	return &BodyReadError{Cause: err}
 }
 
-func (s *Server) refuseBody(w http.ResponseWriter, requestID string, err error) {
+func (s *Server) refuseBody(w http.ResponseWriter, r *http.Request, requestID string, err error) {
 	var unread *BodyReadError
 	if errors.As(err, &unread) {
-		s.events.RequestBodyUnread(journal.RequestLine{RequestID: requestID, BodyErr: unread.Cause})
+		s.events.RequestBodyUnread(journal.RequestLine{RequestID: requestID, TraceID: traceIDOf(r.Context()), BodyErr: unread.Cause})
 	}
 	s.writeErrorFor(w, err)
 }

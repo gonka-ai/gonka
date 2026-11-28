@@ -21,7 +21,7 @@ func TestJaegerPromtailRegression(t *testing.T) {
 	client := harness.GatewayChatClient()
 	t.Cleanup(func() {
 		if t.Failed() {
-			harness.DumpComposeLogs(t, stack, "devshardctl", "versiond-0", "versiond-1", "jaeger", "promtail", "loki")
+			harness.DumpComposeLogs(t, stack, "gateway", "versiond-0", "versiond-1", "jaeger", "promtail", "loki")
 		}
 	})
 
@@ -48,11 +48,11 @@ func TestJaegerPromtailRegression(t *testing.T) {
 	harness.RequireMockOpenAIContent(t, resp.Choices[0].Message.Content)
 
 	traceID := harness.WaitTraceCoveringServices(t, obs,
-		[]string{"devshardctl", "devshardd"},
+		[]string{"gateway", "devshardd"},
 		2*time.Minute,
 	)
 	t.Logf("citest: jaeger shared trace_id=%s", traceID)
-	harness.RequireLogsForTrace(t, obs, traceID, []string{"devshardctl", "versiond.*"}, 2*time.Minute)
-	harness.WaitTraceSpan(t, obs, "devshardctl", "gateway.request", 30*time.Second)
+	harness.RequireLogsForTrace(t, obs, traceID, []string{"gateway", "versiond.*"}, 2*time.Minute)
+	harness.WaitTraceSpan(t, obs, "gateway", "gateway.request", 30*time.Second)
 	harness.WaitTraceSpan(t, obs, "devshardd", "devshardd.request", 30*time.Second)
 }

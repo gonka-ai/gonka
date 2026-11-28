@@ -111,7 +111,7 @@ func TestTheReceiptLineOfAServingSessionCarriesTheHostLabel(t *testing.T) {
 	hostServer := receiptHost(t, hostSigner)
 	rows := rowLister{{EscrowID: labelledEscrow, PrivateKeyEnv: "LABELLED_ESCROW_KEY", Model: "model-a", Active: true}}
 	chain := hostedChain{hostURL: hostServer.URL, slots: []string{hostSigner.Address()}}
-	open := servingSessions(rows, t.TempDir(), chain, config.HeightSync{}, nil, nil, "/devshard/v2", nil, nil)
+	open := servingSessions(rows, t.TempDir(), chain, config.HeightSync{}, nil, nil, nil, "/devshard/v2", nil, nil)
 	session, err := open(context.Background(), labelledEscrow)
 	if err != nil {
 		t.Fatalf("open(%s) = %v", labelledEscrow, err)

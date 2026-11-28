@@ -42,9 +42,6 @@ workload:
       duration: 60s
 
 gateway:
-  participant_throttle:
-    transport_failure_quarantine: 70s
-    http_quarantine: 70s
   redundancy:
     secondary_wait_after_winner: 30s
 

@@ -32,7 +32,7 @@ versiond:
   binary_version: 0.2.13-v2-r2
 versiond_router:
   port: 18080
-devshardctl:
+gateway:
   port: 18081
 postgres:
   enabled: true

@@ -107,7 +107,7 @@ Note: Chain ID will be auto-detected from the chain if not specified with --chai
 
 type settlementFileJSON struct {
 	EscrowID string `json:"escrow_id"`
-	// "version" name is used for compatibility with devshardctl v1
+	// "version" is the settlement file's historical field name
 	StateRootAndProtocolVersion string                    `json:"version"`
 	StateRoot                   string                    `json:"state_root"`
 	Nonce                       uint64                    `json:"nonce"`
@@ -134,7 +134,7 @@ type slotSignatureJSON struct {
 func SettleDevshardEscrowCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "settle-devshard-escrow <settlement-file.json>",
-		Short: "Settle a devshard escrow using a settlement JSON file produced by devshardctl",
+		Short: "Settle a devshard escrow using a settlement JSON file",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			clientCtx, err := client.GetClientTxContext(cmd)

@@ -90,16 +90,11 @@ workload:
        params: {file: devshard-fault-drop-payload}}
     - {id: host-under-poc-challenge, case: host-under-poc-challenge, action: dapi_challenge, target: versiond-4, at: 9m30s, until: 10m30s}
     - {id: host-public-port-down, case: host-public-port-down, action: tripfile, target: versiond-3, at: 13m10s, until: 13m55s,
-       params: {file: devshard-fault-public-down, expect_quarantine: "http,transport"}}
+       params: {file: devshard-fault-public-down}}
 
 gateway:
   redundancy:
     secondary_wait_after_winner: 30s
-  participant_throttle:
-    transport_failure_quarantine: 45s
-    http_quarantine: 45s
-    empty_stream_quarantine: 45s
-    stalled_winner_quarantine: 45s
   escrow_rotation:
     enabled: true
     settlement_enabled: true

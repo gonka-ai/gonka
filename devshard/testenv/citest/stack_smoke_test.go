@@ -9,7 +9,7 @@ import (
 )
 
 // TestStackSmoke brings up mock-chain, mock-dapi, versiond-router, two versiond
-// hosts, and devshardctl; asserts each boundary is healthy.
+// hosts, and the gateway; asserts each boundary is healthy.
 func TestStackSmoke(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
@@ -24,7 +24,7 @@ func TestStackSmoke(t *testing.T) {
 		"mock-dapi",
 		"mock-openai-0",
 		"versiond-router",
-		"devshardctl",
+		"gateway",
 		"devshard-postgres",
 		cfg.Hosts[0].ID,
 		cfg.Hosts[1].ID,

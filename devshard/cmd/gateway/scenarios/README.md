@@ -150,6 +150,20 @@ Checked after every step by `invariants_test.go`. A test that legitimately break
 | `TestAShorterHostsContextRefusalIsRetriedOnALongerHost` | a host running shorter than the model must not refuse a prompt the model takes | the client gets 200 from a longer host, the refused attempt's reservation comes back by the execution timeout and the pinned host defect charges the shorter host a miss |
 | `TestAPromptOverTheModelIsNotRetriedPastAShorterHost` | a prompt the model's length cannot take must not be retried because the first host was shorter | the client gets 400 after one attempt, whose reservation comes back by the execution timeout, and the pinned host defect charges the shorter host a miss |
 
+### Completion journal — `journal_test.go`
+
+| Test | Why it exists | What it checks |
+| --- | --- | --- |
+| `TestAStartedNonceDefersSettlementUntilItsTimeoutResolvesIt` | a stalled host leaves a started nonce journaled while the escrow retires | Finalize is refused as pending and busy, the tick logs no failure, and the escrow settles with an empty journal once the execution timeout resolves the nonce |
+| `TestAJournalEntrySurvivesARestartAndStillGatesFinalize` | a gateway restart with a started, unresolved nonce | the journal entry survives and still gates Finalize until the timeout resolves it, then the escrow settles |
+| `TestAForcedSettleFinalizesThroughAPendingJournalEntry` | the deadline forces the settle of an escrow with a started nonce still journaled | an ordinary Finalize is refused as pending, then the forced settle finalizes inside the margin without waiting for the execution timeout, clears the escrow's journal and logs `escrow settled past unresolved nonces` |
+
+### Cache — `cache_test.go`
+
+| Test | Why it exists | What it checks |
+| --- | --- | --- |
+| `TestAReplyVotedInvalidIsNotServedFromTheCacheAgain` | a cached reply whose inference validators voted invalid must not keep being served | an identical request is a cache hit after the first, and runs a race again once the invalid votes have reached the session |
+
 ### Data — `data_test.go`
 
 | Test | Why it exists | What it checks |
@@ -176,11 +190,13 @@ Checked after every step by `invariants_test.go`. A test that legitimately break
 | Test | Why it exists | What it checks |
 | --- | --- | --- |
 | `TestTheBridgeWindowOpensOverAStarvedFleet` | the bridge must cover the window even when the regulars are starved | one temp serves, the regulars leave after the full fill and a full-context request is answered |
+| `TestADrainedBridgeIsRefilledInsideTheWindow` | temps that spent their money still meet `temp_count`, so the bridge alone never replaces them | eight requests a tick for eight ticks and a full-context request are all answered, the planner created a temp labelled 8 for guard or capacity within its bucket, and no regular was created inside the window |
+| `TestADrainedBridgeIsRefilledThroughARelaxedEpochPoC` | relaxed `poc_mode` serves through the epoch PoC the window holds, so its temps drain there too | the same drain inside the PoC is answered in full by temps the planner created within its bucket, and no regular was created |
 | `TestAStandbyShortfallInsideTheWindowIsRepairedAfterIt` | the bridge window defers the standby, it does not forget it | no standby is created in the window; exactly one is created after the switch, with the reason standby, serving as a reserve labelled with the new epoch |
 | `TestALateSetNewValidatorsLosesNoEscrow` | a long PoC must not push an escrow past its deadline | the bridge temp of chain epoch 7 under label 8, which no regular can retire once the chain refuses creates, settles inside the margin while the effective epoch is still 8, and the run crosses into epoch 9 |
 | `TestRelaxedConfirmationPoCFundsTheShortfallOnceAndStops` | relaxed mode serves through a confirmation PoC, so the planner must fund what those requests need | over six ticks inside the PoC the planner creates the two guard escrows and the standby, stops once the shortfall is filled, and retires nothing |
 | `TestStrictConfirmationPoCStillFundsTheShortfall` | with `poc_mode` off a confirmation PoC refuses requests but the planner still funds what the guarantee needs | requests are blocked by the confirmation PoC while the guarantee and the standby are created and the starved escrow keeps serving |
-| `TestMoneyShortDuringPoCCreatesNothing` | money-short marks during PoC must wait for the switch | in one case an epoch PoC runs outside the bridge window, in the other the bridge window is open with requests unblocked; in each the planner creates nothing behind its one gate and funds the guarantee after the switch |
+| `TestMoneyShortDuringPoCCreatesNothing` | a short guarantee behind a gate that still holds (an epoch PoC outside the bridge window, or requests blocked by admission inside it) waits for the switch | in one case an epoch PoC runs outside the bridge window in relaxed `poc_mode`, in the other it runs inside the window over a starved temp and `poc_mode` `off` blocks requests; in each the planner creates nothing behind its one gate and funds the guarantee after the switch |
 | `TestTheTickAfterPoCFundsRegularsBeforeTempsRetire` | the bridge temp must not retire before regulars replace it | two regulars are created first and the temp leaves only once the spread is met |
 | `TestAShortWalletParksResidueInsteadOfLooping` | a wallet below one create must not loop on creates | no create is broadcast, the broken guarantee is narrated once and the starved escrow is parked and settled |
 | `TestASettleThatNeverCommitsIsRebroadcastInRealBlockTime` | the TTL retry must work with real block times | the second broadcast settles the escrow before the height reaches the deadline |

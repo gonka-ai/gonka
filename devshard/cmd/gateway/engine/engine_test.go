@@ -25,7 +25,11 @@ type scriptedTimeoutHandler struct {
 	calls     int
 	missCalls int
 	finishTx  []byte
+
+	finishApplied bool
 }
+
+func (h *scriptedTimeoutHandler) IsNonceCanonicalFinished(uint64) bool { return h.finishApplied }
 
 func (h *scriptedTimeoutHandler) TimeoutDeadline(uint64, time.Time) (string, time.Time) {
 	return string(TimeoutKindExecution), time.Time{}
@@ -331,7 +335,7 @@ func TestCrownStrikesDenyOnlyAfterRepeatedContentlessAnswers(t *testing.T) {
 }
 
 // Test flow:
-//  1. For each table case's race outcome (no attempt started, the winner breaking after streaming with and without a named reason, a host's own refusal, a trusted or suspicious context-length rejection competing with an earlier refusal, the crowned attempt's refusal outranking a rejection, an empty stream, every attempt taken by proof of compute, an unexplained failure, hosts refusing as unavailable/throttled/mixed, one non-availability failure among unavailable ones, a trusted host error over an all-unavailable race), compute `outcome.failure()`.
+//  1. For each table case's race outcome (no attempt started, the winner breaking after streaming with and without a named reason, a host's own refusal, a trusted or suspicious context-length rejection competing with an earlier refusal, the crowned attempt's refusal outranking a rejection, an empty stream, every attempt taken by proof of compute, an unexplained failure, hosts refusing as unavailable/throttled/mixed, one non-availability failure among unavailable ones, a trusted host error over an all-unavailable race), compute `outcome.Failure()`.
 //  2. Assert a `HostApplicationError` case matches by type and message, and any other case matches the expected sentinel via `errors.Is`.
 func TestOutcomeFailureNamesWhatTheClientLost(t *testing.T) {
 	t.Parallel()
@@ -493,7 +497,7 @@ func TestOutcomeFailureNamesWhatTheClientLost(t *testing.T) {
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			got := testCase.outcome.failure()
+			got := testCase.outcome.Failure()
 
 			var hostErr *HostApplicationError
 			if errors.As(testCase.want, &hostErr) {

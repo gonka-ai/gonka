@@ -28,7 +28,7 @@ func (s *settleObserver) Settle(_ context.Context, escrowID string, _ bool) (cha
 }
 
 type rowDeletingSettler struct {
-	records *store.Store
+	records store.Store
 }
 
 func (s *rowDeletingSettler) CreateEscrow(context.Context, escrow.ModelConfig) (chain.CreateEscrowResult, error) {
@@ -42,7 +42,7 @@ func (s *rowDeletingSettler) Settle(ctx context.Context, escrowID string, _ bool
 	return chain.SettleEscrowResult{}, s.records.DeleteDevshard(ctx, escrowID)
 }
 
-func settleableEscrow(t *testing.T) (*store.Store, *registry.Registry) {
+func settleableEscrow(t *testing.T) (store.Store, *registry.Registry) {
 	t.Helper()
 	records := openedStore(t)
 	if err := records.UpsertDevshard(context.Background(), store.DevshardRecord{EscrowID: "42", PrivateKeyEnv: "DEVSHARD_IMPORT_KEY", Model: "model-a", Active: true}); err != nil {

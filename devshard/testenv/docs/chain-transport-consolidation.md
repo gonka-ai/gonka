@@ -1,8 +1,6 @@
 # Chain transport consolidation — gRPC-only gateway (Phase 12b)
 
-**Goal:** Remove LCD REST and grpc-gateway HTTP from the **devshardctl (gateway)** chain
-path. All chain **queries** and **tx** (create/settle escrow) go through `common/chain`
-gRPC — the same transport devshardd already uses.
+**Goal:** Remove LCD REST and grpc-gateway HTTP from the **gateway** chain path. All chain **queries** and **tx** (create/settle escrow) go through `common/chain` gRPC — the same transport devshardd already uses.
 
 **Non-goals (separate tracks):**
 
@@ -29,9 +27,6 @@ gRPC — the same transport devshardd already uses.
 | Consumer                                                         | Queries                                    | Tx broadcast                                             | Status          |
 | ---------------------------------------------------------------- | ------------------------------------------ | -------------------------------------------------------- | --------------- |
 | **devshardd** (`cmd/devshardd/bridge/chain.go`)                  | `common/chain.Client` gRPC                 | `cmd/devshardd/tx/manager.go` → `cosmos.tx.v1beta1` gRPC | ✅ gRPC          |
-| **devshardctl params** (`runtime_params.go`)                     | `common/chain` gRPC primary; REST fallback | —                                                        | ⚠️ partial      |
-| **devshardctl escrow reads** (`gateway.go`, `escrow_checker.go`) | `bridge.RESTBridge` → LCD JSON             | —                                                        | ❌ REST          |
-| **devshardctl create/settle** (`chain_tx_rest.go`)               | account/tx poll via LCD                    | `POST /cosmos/tx/v1beta1/txs`                            | ❌ REST          |
 | **testenv compose** (`gencompose`)                               | `DEVSHARD_CHAIN_GRPC`                      | `DEVSHARD_CHAIN_REST`, `DEVSHARD_TX_QUERY_REST`          | ❌ dual face     |
 | **mock-chain**                                                   | gRPC `:9090` inference + cmtservice        | LCD `:1317` only (`restface`)                            | ⚠️ tx REST-only |
 
@@ -44,7 +39,7 @@ query) + `cmd/devshardd/bridge/chain.go` (gRPC escrow/participant queries).
 ## Target architecture
 
 ```text
-devshardctl (gateway)
+gateway
     │
     ├─ runtime params (adaptive)     → mock-dapi gRPC long-poll + common/chain gRPC fallback
     ├─ escrow / participant queries  → common/chain.Client (inference Query gRPC)
@@ -115,7 +110,7 @@ Status key: ⬜ not started · 🟡 in progress · ✅ done
 | C4  | Remove `DEVSHARD_TX_QUERY_REST` from gencompose + gateway wiring tests                                      | PR-4       | ✅      |
 
 
-**Exit C:** No `NewRESTChainTxClient` in `devshard/cmd/devshardctl`.
+**Exit C:** No `NewRESTChainTxClient` in `devshard/cmd/gateway`.
 
 ### Track D — gateway query migration (`RESTBridge` → gRPC)
 
@@ -137,7 +132,7 @@ Status key: ⬜ not started · 🟡 in progress · ✅ done
 
 | ID  | Task                                                                                    | Owner / PR | Status |
 | --- | --------------------------------------------------------------------------------------- | ---------- | ------ |
-| E1  | gencompose: drop `DEVSHARD_CHAIN_REST` from devshardctl service                         | PR-4       | ⬜      |
+| E1  | gencompose: drop `DEVSHARD_CHAIN_REST` from the gateway service                        | PR-4       | ⬜      |
 | E2  | `runtime_params.go`: remove REST chain fetcher fallback (or gate behind deprecated env) | PR-4       | ⬜      |
 | E3  | Gateway persisted settings: migrate `chain_rest` → deprecated/no-op                     | PR-4       | ⬜      |
 | E4  | Update `DEVELOPMENT-MODE.md`, `testenv-v2.md`, deploy/join docs                         | PR-4       | ⬜      |
@@ -154,7 +149,6 @@ Status key: ⬜ not started · 🟡 in progress · ✅ done
 | **G1** | gRPC escrow create | Gateway creates escrow via gRPC tx only; visible on gRPC query                 | `TestG1_GatewayEscrowCreateGRPC`               | ✅      |
 | **G2** | gRPC escrow read   | Gateway reads escrow via gRPC bridge (no LCD)                                  | `TestG2_GatewayEscrowReadGRPC`                 | ✅      |
 | **G3** | Chat without LCD   | Full chat path with compose **without** `DEVSHARD_CHAIN_REST` / mock REST port | `TestG3_GatewayChatGRPCOnly`                   | ⬜      |
-| **G4** | REST removed gate  | CI grep: no `NewRESTBridge` / `RESTChainTxClient` in devshardctl               | `TestG4_NoRESTChainClientsInGatewayProduction` | ✅      |
 
 
 Detail: `[scenarios.md](./scenarios.md)` § Phase 12 transport scenarios.
@@ -192,11 +186,10 @@ gateway chat to gRPC-only.
 | ---------------------- | ------------------------------------------------------------ | -------- |
 | `common/chain/tx` unit | `go test ./common/chain/tx/... -count=1`                     | PR-1+    |
 | mock-chain gRPC tx     | `go test ./devshard/testenv/mockchain/grpcface/... -count=1` | PR-2+    |
-| gateway unit (no REST) | `go test ./devshard/cmd/devshardctl/... -count=1`            | PR-3+    |
+| gateway unit (no REST) | `go test ./devshard/cmd/gateway/... -count=1`                | PR-3+    |
 | bridge gRPC            | `go test ./devshard/bridge/... -count=1`                     | PR-3+    |
 | G1–G3 citest           | `make citest-grpc-transport`                                 | PR-4+    |
 | Full stack regression  | `make citest-stack`                                          | every PR |
-| Transport gate         | `go test ./devshard/testenv/citest/ -run TestG4 -count=1`    | PR-4+    |
 | CI unit                | `make -C devshard ci-testenv-unit`                           | every PR |
 
 
@@ -217,9 +210,9 @@ Do **not** force gateway onto file keyring in v1 — adapter keeps gateway deplo
 
 ## Exit criteria (definition of done)
 
-- [ ] `devshardctl` has **zero** production chain `http.Client` calls (excluding `DEVSHARD_PUBLIC_API` → mock-dapi).
-- [ ] `grep -r 'NewRESTBridge\|RESTChainTxClient\|DEVSHARD_CHAIN_REST' devshard/cmd/devshardctl` → empty.
-- [ ] gencompose devshardctl service: `DEVSHARD_CHAIN_GRPC` only (no REST chain env).
+- [ ] the gateway has **zero** production chain `http.Client` calls (excluding `DEVSHARD_PUBLIC_API` → mock-dapi).
+- [ ] `grep -r 'NewRESTBridge\|RESTChainTxClient\|DEVSHARD_CHAIN_REST' devshard/cmd/gateway` → empty.
+- [ ] gencompose gateway service: `DEVSHARD_CHAIN_GRPC` only (no REST chain env).
 - [ ] **G1, G2, G3** citest green; gateway chat runs through G3 / `citest-stack` without LCD.
 - [ ] `make -C devshard ci-testenv-unit` and `ci-testenv-integration` green.
 - [ ] `[scenarios.md](./scenarios.md)` updated: G1–G3 marked ✅ and gateway chat no longer mentions LCD.

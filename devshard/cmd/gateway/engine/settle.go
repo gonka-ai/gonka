@@ -22,6 +22,7 @@ type TimeoutPoster interface {
 type TimeoutVote struct {
 	Kind          TimeoutKind
 	Detail        string
+	Skipped       bool
 	Unjudged      bool
 	VerifyRejects []string
 	Completeness  MissProofCompleteness
@@ -79,7 +80,7 @@ func timeoutVoteKind(vote, fallback TimeoutKind) TimeoutKind {
 }
 
 func (o RaceOutcome) nonceSettled(a AttemptOutcome) bool {
-	return a.NonceFinished && !a.emptyStream() && !a.errorStream()
+	return a.FinishApplied && !a.emptyStream() && !a.errorStream()
 }
 
 // timeoutSkipReason names every skip; a diverged escrow state is deliberately not one. See race.md, "Timeout votes".
@@ -90,12 +91,10 @@ func (o RaceOutcome) timeoutSkipReason(a AttemptOutcome) (TimeoutReason, bool) {
 	switch {
 	case a.PhaseTransitionAborted:
 		return TimeoutReasonPhaseAborted, true
-	case a.emptyStream() && a.NonceFinished:
+	case a.emptyStream() && a.FinishApplied:
 		return TimeoutReasonEmptyStream, true
-	case a.NonceFinished:
+	case a.FinishApplied:
 		return TimeoutReasonNonceFinished, true
-	case o.longResponseExempt(a):
-		return TimeoutReasonLongResponse, true
 	}
 	return TimeoutReasonUnset, false
 }
@@ -213,21 +212,21 @@ func voteDue(step TimeoutStep, poster TimeoutPoster) time.Time {
 	return poster.VoteDeadline(step.Nonce, step.StartedAt)
 }
 
-func (e *Engine) followVotes(outcome RaceOutcome, poster TimeoutPoster, pass votePass, afterPost, markSettled func(), round int) func() {
+func (e *Engine) followVotes(outcome RaceOutcome, poster TimeoutPoster, registration *raceRegistration, pass votePass, afterPost, markSettled func(), round int) func() {
 	groups := voteGroups(pass.deferred, poster)
 	if len(groups) == 0 {
 		afterPost()
-		return e.retryRefusedVotes(outcome, poster, pass.retries, markSettled, round)
+		return e.retryRefusedVotes(outcome, poster, registration, pass.retries, markSettled, round)
 	}
 	deferredPosted := afterAll(len(groups), afterPost)
 	settled := afterAll(len(groups)+1, markSettled)
 	for _, group := range groups {
-		e.queueVotes(outcome, poster, group.steps, deferredPosted, settled, round)
+		e.queueVotes(outcome, poster, registration, group.steps, deferredPosted, settled, round)
 	}
-	return e.retryRefusedVotes(outcome, poster, pass.retries, settled, round)
+	return e.retryRefusedVotes(outcome, poster, registration, pass.retries, settled, round)
 }
 
-func (e *Engine) retryRefusedVotes(outcome RaceOutcome, poster TimeoutPoster, steps []TimeoutStep, markSettled func(), round int) func() {
+func (e *Engine) retryRefusedVotes(outcome RaceOutcome, poster TimeoutPoster, registration *raceRegistration, steps []TimeoutStep, markSettled func(), round int) func() {
 	if len(steps) == 0 || round >= refusedVoteRetries || e.stopping.Err() != nil {
 		if e.stopping.Err() == nil {
 			e.payRefusals(outcome.EscrowID, steps, nil)
@@ -242,7 +241,7 @@ func (e *Engine) retryRefusedVotes(outcome RaceOutcome, poster TimeoutPoster, st
 		post: func() {
 			pass := postTimeouts(settleContext(outcome.RequestID), poster, steps, outcome.Lifecycle.EscrowMissing, e.reportTimeout)
 			e.payRefusals(outcome.EscrowID, steps, pass.pending())
-			settle = e.followVotes(outcome, poster, pass, func() {}, markSettled, round+1)
+			settle = e.followVotes(outcome, poster, registration, pass, func() {}, markSettled, round+1)
 		},
 		settled: func() {
 			if settle != nil {
@@ -312,8 +311,17 @@ func TimeoutOutcome(vote TimeoutVote, err error, escrowMissing bool) (action Tim
 		return TimeoutActionFailed, TimeoutReasonEscrowGone
 	case err != nil:
 		return TimeoutActionFailed, firstNamed(vote.Detail, TimeoutReasonCollectionError)
+	case vote.Skipped:
+		return TimeoutActionSkipped, skippedReason(vote.Detail)
 	}
 	return TimeoutActionCompleted, TimeoutReasonNone
+}
+
+func skippedReason(detail string) TimeoutReason {
+	if detail == sessionDetailNonceClosed {
+		return TimeoutReasonNonceFinished
+	}
+	return firstNamed(detail, TimeoutReasonNonceFinished)
 }
 
 func firstNamed(detail string, fallback TimeoutReason) TimeoutReason {

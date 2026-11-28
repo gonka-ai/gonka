@@ -14,7 +14,6 @@ import (
 	"syscall"
 	"time"
 
-	"devshard/testenv/config"
 	"devshard/testenv/loadtest"
 )
 
@@ -26,7 +25,6 @@ func main() {
 	loadDataset := flag.String("load-dataset", "", "JSONL dataset with captured client requests and ML responses")
 	metricsInterval := flag.Duration("metrics-interval", time.Second, "process and escrow metrics sampling interval (minimum 100ms)")
 	runTimeout := flag.Duration("timeout", 0, "overall run timeout; default: workload + drain + 10m, at least 20m")
-	gatewayDriver := flag.String("gateway", "", "gateway binary to drive: devshardctl or gateway; default: the scenario's topology.gateway, else devshardctl")
 	strictXFail := flag.Bool("strict-xfail", false, "fail the run when a known_bug case passes (XPASS)")
 	checkHistory := flag.String("check-history", "", "file of outcomes judged across runs: known_bug XPASS runs in a row, max_pending_age repeats; default: check-history.json beside the run directory")
 	reportDir := flag.String("report", "", "rebuild report.md of an existing run directory and print it, without running")
@@ -96,7 +94,6 @@ func main() {
 		KeepStack:       *keepStack,
 		LoadDataset:     *loadDataset,
 		MetricsInterval: *metricsInterval,
-		GatewayDriver:   config.GatewayDriver(*gatewayDriver),
 		StrictXFail:     *strictXFail,
 		CheckHistory:    *checkHistory,
 	})
@@ -176,8 +173,6 @@ func printSummary(result loadtest.RunResult, passed bool) {
 	fmt.Fprintln(os.Stdout)
 
 	printMLNodeStats(result.MLStats)
-	fmt.Fprintln(os.Stdout)
-	printGatewayStateSizes(result.GatewayState)
 	fmt.Fprintln(os.Stdout)
 	printAccounting(result.Accounting)
 	printMetricsSummary(result.Metrics, summary.Completed)
@@ -291,17 +286,6 @@ func printMLNodeStats(stats map[string]loadtest.MLNodeStats) {
 	}
 }
 
-func printGatewayStateSizes(sizes loadtest.GatewayStateSizes) {
-	fmt.Fprintln(os.Stdout, "Gateway state")
-	fmt.Fprintln(os.Stdout, "-------------")
-	fmt.Fprintf(os.Stdout, "  diff history:        %d\n", sizes.Diffs)
-	fmt.Fprintf(os.Stdout, "  diff payload:        %.3f MiB (%d bytes)\n", sizes.DiffsMB, sizes.DiffsBytes)
-	fmt.Fprintf(os.Stdout, "  signature nonces:    %d\n", sizes.SignatureNonces)
-	fmt.Fprintf(os.Stdout, "  nonce states:        %d\n", sizes.NonceStates)
-	fmt.Fprintf(os.Stdout, "  pending transactions: %d\n", sizes.PendingTxs)
-	fmt.Fprintf(os.Stdout, "  applied tx keys:     %d\n", sizes.AppliedTxKeys)
-}
-
 func formatIntCounts(counts map[string]int) string {
 	keys := make([]string, 0, len(counts))
 	for key := range counts {
@@ -353,10 +337,7 @@ func printMetricsSummary(summary loadtest.MetricsSummary, completed int) {
 		if escrow.LastNonce != nil {
 			last = fmt.Sprint(*escrow.LastNonce)
 		}
-		fmt.Fprintf(os.Stdout, "  escrow=%s nonce=%s -> %s samples=%d max retained diffs=%d payload=%.3f MiB max signature nonces=%d\n", escrow.EscrowID, first, last, escrow.Samples, escrow.MaxDiffs, float64(escrow.MaxDiffBytes)/(1<<20), escrow.MaxSignatureNonces)
-		if escrow.First != nil && escrow.Last != nil {
-			fmt.Fprintf(os.Stdout, "    diffs=%d -> %d signatures=%d -> %d nonce states=%d -> %d applied tx keys=%d -> %d pending txs=%d -> %d\n", escrow.First.Diffs, escrow.Last.Diffs, escrow.First.SignatureNonces, escrow.Last.SignatureNonces, escrow.First.NonceStates, escrow.Last.NonceStates, escrow.First.AppliedTxKeys, escrow.Last.AppliedTxKeys, escrow.First.PendingTxs, escrow.Last.PendingTxs)
-		}
+		_, _ = fmt.Fprintf(os.Stdout, "  escrow=%s nonce=%s -> %s\n", escrow.EscrowID, first, last)
 	}
 	if len(summary.CollectionErrors) > 0 {
 		fmt.Fprintf(os.Stdout, "  collection/artifact errors: %d (see metrics-summary.json)\n", len(summary.CollectionErrors))

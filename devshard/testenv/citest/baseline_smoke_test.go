@@ -43,12 +43,12 @@ func TestBaselineSmoke(t *testing.T) {
 	client := harness.GatewayChatClient()
 	t.Cleanup(func() {
 		if t.Failed() {
-			harness.DumpComposeLogs(t, stack, "devshardctl", "versiond-0", "versiond-1", "versiond-router", "mock-openai")
+			harness.DumpComposeLogs(t, stack, "gateway", "versiond-0", "versiond-1", "versiond-router", "mock-openai")
 		}
 	})
 
 	harness.WaitStackHealthy(t, stack, eps)
-	stack.RequireServicesRunning(t, "versiond-0", "versiond-1", "versiond-router", "devshardctl")
+	stack.RequireServicesRunning(t, "versiond-0", "versiond-1", "versiond-router", "gateway")
 	proxyUp, err := stack.ServiceRunning("proxy")
 	require.NoError(t, err)
 	require.False(t, proxyUp, "proxy service must not be running")
@@ -79,7 +79,7 @@ func TestBaselineSmoke(t *testing.T) {
 	for _, line := range up {
 		t.Logf("P6.8.1 %s", line)
 	}
-	running, err := stack.ServiceRunning("devshardctl")
+	running, err := stack.ServiceRunning("gateway")
 	require.NoError(t, err)
 	require.True(t, running, "gateway exited after /devshard/stats/rpc scrape")
 

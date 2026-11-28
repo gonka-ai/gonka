@@ -5,17 +5,14 @@
 //
 //   - session storage (devshard/storage.NewStorage)
 //   - payload storage (common/storage/payloads)
-//   - gateway epoch accounting (devshard/accounting)
-//   - gateway management state (devshardctl gateway.db)
 //
 // Each plane resolves the mode the same way: sqlite never opens Postgres, and
 // hybrid / postgres require PGHOST. Whenever Postgres is selected, local SQLite
 // state is migrated into it before serving.
 //
 // Runtime SQLite fallback when Postgres is down is session-storage-only
-// (owner-only degraded mode while reconnecting). Gateway management state and
-// epoch accounting are fail-closed once PGHOST selects Postgres — there is no
-// SQLite write fallback for those planes. See devshard/docs/storage-design.md.
+// (owner-only degraded mode while reconnecting). See
+// devshard/docs/storage-design.md.
 //
 //	sqlite   — local only (SQLite / files)
 //	hybrid   — Postgres primary; session storage may degrade to local SQLite

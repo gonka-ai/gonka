@@ -22,6 +22,7 @@ import (
 	"devshard/cmd/gateway/escrow"
 	"devshard/cmd/gateway/internal/logcapture"
 	"devshard/cmd/gateway/store"
+	"devshard/cmd/gateway/store/sqlite"
 	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/types"
@@ -312,7 +313,7 @@ func setGatewayEnvironment(t *testing.T, spec testSpec, creator *signing.Secp256
 		"DEVSHARD_ESCROW_ROTATION_MODELS_JSON":        modelsJSON(t, spec.allModels(), nil),
 		"DEVSHARD_TX_FEE_AMOUNT":                      "1000",
 		"DEVSHARD_TX_POLL_INTERVAL_MS":                "500",
-		"DEVSHARD_GATEWAY_HOST_PING_DISABLED":         "true",
+		"DEVSHARD_GATEWAY_HOST_PING_ENABLED":          "false",
 		"GATEWAY_WARM_NEW_ESCROWS":                    strconv.FormatBool(spec.armedFloor),
 		"DEVSHARD_STATS_ENABLED":                      "true",
 		"DEVSHARD_STATS_PORT":                         "9091",
@@ -371,9 +372,9 @@ func (h *gatewayHarness) start() {
 		h.t.Fatalf("env.Load().StorageDir = nil, want the DEVSHARD_STORAGE_DIR the harness set")
 	}
 	storageDir := *values.StorageDir
-	gatewayStore, err := store.Open(storageDir)
+	gatewayStore, err := sqlite.Open(storageDir)
 	if err != nil {
-		h.t.Fatalf("store.Open() = %v, want nil", err)
+		h.t.Fatalf("sqlite.Open() = %v, want nil", err)
 	}
 	if err := gatewayStore.SaveOverrides(context.Background(), config.Overrides{Models: openModelAccess(h.spec.allModels())}); err != nil {
 		h.t.Fatalf("SaveOverrides() = %v, want nil", err)
@@ -391,7 +392,7 @@ func (h *gatewayHarness) start() {
 	h.boot(gatewayStore)
 }
 
-func (h *gatewayHarness) boot(gatewayStore *store.Store) {
+func (h *gatewayHarness) boot(gatewayStore store.Store) {
 	sources := app.Sources{
 		Serving:   h.fleet.serving,
 		ReadOnly:  h.fleet.readOnly,
@@ -413,7 +414,7 @@ func (h *gatewayHarness) boot(gatewayStore *store.Store) {
 			continue
 		}
 		if step.Name == "nonce ledger" {
-			composed.Nonces().StartSweeping(background, composed.Escrows(), composed.Journal())
+			composed.Nonces().StartSweeping(background, composed.Escrows(), composed.DiffJournal())
 			continue
 		}
 		if step.Name == "escrow lifecycle" {
@@ -603,9 +604,9 @@ func (step restartGateway) apply(harness *gatewayHarness) {
 		step.whileDown.apply(harness)
 	}
 	harness.severedSessions += harness.fleet.severOpenSessions()
-	gatewayStore, err := store.Open(harness.storageDir)
+	gatewayStore, err := sqlite.Open(harness.storageDir)
 	if err != nil {
-		harness.t.Fatalf("store.Open() on restart = %v, want nil", err)
+		harness.t.Fatalf("sqlite.Open() on restart = %v, want nil", err)
 	}
 	harness.boot(gatewayStore)
 }

@@ -33,7 +33,6 @@ type MetricsSample struct {
 	Errors    []string            `json:"errors,omitempty"`
 	EscrowID  string              `json:"escrow_id,omitempty"`
 	Nonce     *uint64             `json:"nonce,omitempty"`
-	State     *GatewayStateSizes  `json:"state,omitempty"`
 	BuildInfo []map[string]string `json:"build_info,omitempty"`
 	// Domain keeps the domainMetricPrefixes series, keyed name{label="v",...}.
 	Domain map[string]float64 `json:"domain,omitempty"`
@@ -55,15 +54,9 @@ type ProcessMetricsSummary struct {
 }
 
 type EscrowMetricsSummary struct {
-	EscrowID           string             `json:"escrow_id"`
-	Samples            int                `json:"samples"`
-	FirstNonce         *uint64            `json:"first_nonce,omitempty"`
-	LastNonce          *uint64            `json:"last_nonce,omitempty"`
-	First              *GatewayStateSizes `json:"first,omitempty"`
-	Last               *GatewayStateSizes `json:"last,omitempty"`
-	MaxDiffs           int                `json:"max_diffs"`
-	MaxDiffBytes       int64              `json:"max_diff_bytes"`
-	MaxSignatureNonces int                `json:"max_signature_nonces"`
+	EscrowID   string  `json:"escrow_id"`
+	FirstNonce *uint64 `json:"first_nonce,omitempty"`
+	LastNonce  *uint64 `json:"last_nonce,omitempty"`
 }
 
 type MetricsSummary struct {
@@ -220,7 +213,7 @@ done
 
 func dockerProbe(ctx context.Context, dir, project, compose, service, executable, metricsURL string) (string, error) {
 	script := processProbe
-	if metricsURL != "" {
+	if metricsURL != probeProcessOnly {
 		script = `wget -q -T 3 -O - "$2" || exit 1
 ` + script
 	}
@@ -288,7 +281,7 @@ func startMetricsCollector(ctx context.Context, opts RunnerConfig, cfg *config.F
 			if err != nil {
 				sample.Errors = append(sample.Errors, err.Error())
 			}
-			if service == "devshardctl" {
+			if service == gatewayService {
 				httpBody, httpErr := getMetricsHTTP(ctx, gatewayURL+"/metrics", apiKey)
 				if httpErr != nil {
 					sample.Errors = append(sample.Errors, httpErr.Error())
@@ -311,11 +304,7 @@ func startMetricsCollector(ctx context.Context, opts RunnerConfig, cfg *config.F
 			add(sample)
 		}
 		wg.Add(1)
-		gatewayExecutable := "devshardctl"
-		if cfg.Devshardctl.Driver.IsGateway() {
-			gatewayExecutable = "gateway"
-		}
-		go scrape("gateway", "devshardctl", gatewayExecutable, "")
+		go scrape(gatewayService, gatewayService, gatewayExecutable, probeProcessOnly)
 		for _, host := range cfg.Hosts {
 			wg.Add(1)
 			go scrape(host.ID+"/devshardd", host.ID, "devshardd", fmt.Sprintf("http://127.0.0.1:%d/%s/metrics", config.DefaultHostPort, cfg.Versiond.VersionName))
@@ -331,14 +320,6 @@ func startMetricsCollector(ctx context.Context, opts RunnerConfig, cfg *config.F
 			for _, id := range ids {
 				base := scopedGatewayURL(gatewayURL, id)
 				sample := MetricsSample{At: time.Now().UTC(), Target: "escrow", EscrowID: id}
-				if !cfg.Devshardctl.Driver.IsGateway() {
-					sizes, err := fetchGatewayStateSizes(ctx, base, apiKey)
-					if err != nil {
-						sample.Errors = append(sample.Errors, err.Error())
-					} else {
-						sample.State = &sizes
-					}
-				}
 				statusBody, err := getMetricsHTTP(ctx, base+"/v1/status", apiKey)
 				if err != nil {
 					sample.Errors = append(sample.Errors, err.Error())
@@ -377,11 +358,10 @@ func startMetricsCollector(ctx context.Context, opts RunnerConfig, cfg *config.F
 	return c, nil
 }
 
-// parseStatus reads the chain phase and devshardctl's top-level nonce, or the nonce of the single escrow the gateway lists under devshards.
+// parseStatus reads the chain phase and the nonce of the single escrow the gateway lists under devshards.
 func parseStatus(body string) (*uint64, string, error) {
 	var status struct {
-		Nonce      *uint64 `json:"nonce"`
-		ChainPhase string  `json:"chain_phase"`
+		ChainPhase string `json:"chain_phase"`
 		Devshards  []struct {
 			Nonce uint64 `json:"nonce"`
 		} `json:"devshards"`
@@ -389,11 +369,11 @@ func parseStatus(body string) (*uint64, string, error) {
 	if err := json.Unmarshal([]byte(body), &status); err != nil {
 		return nil, "", err
 	}
-	if status.Nonce == nil && len(status.Devshards) == 1 {
+	if len(status.Devshards) == 1 {
 		nonce := status.Devshards[0].Nonce
 		return &nonce, status.ChainPhase, nil
 	}
-	return status.Nonce, status.ChainPhase, nil
+	return nil, status.ChainPhase, nil
 }
 
 func newMetricsCollector(ctx context.Context, file *os.File, outputDir string, interval time.Duration) *metricsCollector {
@@ -425,16 +405,6 @@ func (c *metricsCollector) observe(sample MetricsSample) {
 		if s == nil {
 			s = &EscrowMetricsSummary{EscrowID: sample.EscrowID}
 			c.escrows[sample.EscrowID] = s
-		}
-		if sample.State != nil {
-			s.Samples++
-			if s.First == nil {
-				s.First = sample.State
-			}
-			s.Last = sample.State
-			s.MaxDiffs = max(s.MaxDiffs, sample.State.Diffs)
-			s.MaxDiffBytes = max(s.MaxDiffBytes, sample.State.DiffsBytes)
-			s.MaxSignatureNonces = max(s.MaxSignatureNonces, sample.State.SignatureNonces)
 		}
 		if sample.Nonce != nil {
 			if s.FirstNonce == nil {

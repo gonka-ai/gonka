@@ -17,19 +17,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// versiond hosts declare stop_grace_period: 30m so operator evacuation can drain. Fault-injection StopService
+// must not inherit that: without --timeout, compose waits the full grace, the 2m CommandContext SIGKILLs the
+// CLI, and the container is still running (H27/H40), hence composeFaultStopTimeout.
+//
+// gatewayComposeService is the citest gateway. Heartbeat/seed and escrow warmup wait for catalog admission
+// inside the process, but client chat does not. Start the process after the router has admitted the version
+// so the first chat is not a catalog-503 flake.
 const (
 	defaultStackTimeout       = 12 * time.Minute
 	composeCleanupStopTimeout = 5 * time.Second
-	// versiond hosts declare stop_grace_period: 30m so operator evacuation can
-	// drain. Fault-injection StopService must not inherit that: without
-	// --timeout, compose waits the full grace, the 2m CommandContext SIGKILLs
-	// the CLI, and the container is still running (H27/H40).
-	composeFaultStopTimeout = 10 * time.Second
-	// gatewayComposeService is the citest gateway. Heartbeat/seed and escrow
-	// warmup wait for catalog admission inside the process, but client chat
-	// does not. Start the process after the router has admitted the version
-	// so the first chat is not a catalog-503 flake.
-	gatewayComposeService = "devshardctl"
+	composeFaultStopTimeout   = 10 * time.Second
+	gatewayComposeService     = "gateway"
 )
 
 const (
@@ -147,12 +146,12 @@ func (s *Stack) Endpoints(t *testing.T, cfg *config.File) Endpoints {
 	eps.MockDapiGRPC = s.composePublishedAddr(t, "mock-dapi", cfg.MockDapi.GRPCPort)
 	eps.MockOpenAIHTTP = "http://" + s.composePublishedAddr(t, cfg.PrimaryMLNodeID(), cfg.MockOpenAI.HTTPPort)
 	eps.RouterHTTP = "http://" + s.composePublishedAddr(t, "versiond-router", 8080)
-	eps.GatewayHTTP = "http://" + s.composePublishedAddr(t, "devshardctl", cfg.Devshardctl.Port)
+	eps.GatewayHTTP = "http://" + s.composePublishedAddr(t, gatewayComposeService, cfg.Gateway.Port)
 	return eps
 }
 
 // RouterHTTP is the host-published versiond-router URL. Use this when the
-// gateway is stopped (`Endpoints` also queries devshardctl).
+// gateway is stopped (`Endpoints` also queries gateway).
 func (s *Stack) RouterHTTP(t *testing.T) string {
 	t.Helper()
 	return "http://" + s.composePublishedAddr(t, "versiond-router", 8080)

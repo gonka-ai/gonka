@@ -11,7 +11,7 @@ import (
 
 	"devshard/cmd/gateway/config"
 	"devshard/cmd/gateway/internal/logcapture"
-	"devshard/cmd/gateway/store"
+	"devshard/cmd/gateway/store/sqlite"
 )
 
 const (
@@ -37,9 +37,9 @@ func warnings(logged *logcapture.Recorder) string {
 
 func storeLegacyDocument(t *testing.T, document string) {
 	t.Helper()
-	records, err := store.Open(os.Getenv("DEVSHARD_STORAGE_DIR"))
+	records, err := sqlite.Open(os.Getenv("DEVSHARD_STORAGE_DIR"))
 	if err != nil {
-		t.Fatalf("store.Open(): %v", err)
+		t.Fatalf("sqlite.Open(): %v", err)
 	}
 	overrides, err := config.ParseStoredOverrides([]byte(document))
 	if err != nil {
@@ -119,7 +119,7 @@ func TestAPostWithModelAccessTakesEffect(t *testing.T) {
 	if got := strings.Count(warnings(logged), "settings key model_access is deprecated"); got != 1 {
 		t.Fatalf("model_access warnings = %d, want 1", got)
 	}
-	gateway.requireAdminStatus(http.StatusOK, http.MethodPost, "/v1/admin/settings", `{"disabled":false}`)
+	gateway.requireAdminStatus(http.StatusOK, http.MethodPost, "/v1/admin/settings", `{"enabled":true}`)
 	_, stored := gateway.admin(http.MethodGet, "/v1/admin/settings", "")
 	if !strings.Contains(stored, `"model_access":{"model-a":"open"}`) {
 		t.Fatalf("settings = %s, want model_access kept by an unrelated write", stored)

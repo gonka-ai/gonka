@@ -189,9 +189,6 @@ func TestVersionlessObservabilityPaths(t *testing.T) {
 	if got := VersionlessStatsShardsPath(); got != "/devshard/stats/shards" {
 		t.Fatalf("stats = %q", got)
 	}
-	if got := VersionlessStatsRPCPath(); got != "/devshard/stats/rpc" {
-		t.Fatalf("stats rpc = %q", got)
-	}
 	if got := VersionlessStatsShardDetailPath("42"); got != "/devshard/stats/shards/42" {
 		t.Fatalf("stats detail = %q", got)
 	}

@@ -44,6 +44,10 @@ func (n *recordingEscrowNarrator) RetirementPendingFlushed(escrowID string, pend
 	n.note("flushed %s pending %d error %v", escrowID, pending, err)
 }
 
+func (n *recordingEscrowNarrator) CompletionJournalFailed(escrowID string, err error) {
+	n.note("completion journal failed %s error %v", escrowID, err)
+}
+
 func (n *recordingEscrowNarrator) SettlementUnverifiable(escrowID string, nonce uint64, _ error) {
 	n.note("unverifiable %s nonce %d", escrowID, nonce)
 }

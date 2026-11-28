@@ -125,12 +125,10 @@ type ClientConfig struct {
 	// the admission controller for both AllowRequest and ObserveResult.
 	// Callers MUST use the participant's gonka validator address
 	// (bech32, e.g. "gonka1abc..."); this is the same key used by
-	// chain-side state (CapacityState weights, PoC preservation,
-	// escrow membership) and by the higher-level
-	// ParticipantRequestLimiter. Using anything else (URL host:port,
-	// IP, hostname, etc.) silently breaks throttle/recovery because
-	// the admission controller's bucket map will not align with the
-	// keys those other subsystems use.
+	// chain-side state (weights, PoC preservation, escrow membership).
+	// Using anything else (URL host:port, IP, hostname, etc.) silently
+	// breaks throttle/recovery because the admission controller's bucket
+	// map will not align with the keys those other subsystems use.
 	ParticipantKey string
 	Admission      RequestAdmissionController
 
@@ -312,27 +310,6 @@ func IsTransientWriteError(err error) bool {
 		errors.Is(err, syscall.EPIPE) ||
 		errors.Is(err, syscall.ECONNRESET) ||
 		errors.Is(err, syscall.ECONNREFUSED)
-}
-
-// IsUpstreamEscrowSettled reports a host that refused an escrow already
-// settled on chain. The header is escrow_settled. HTTP also uses 409 and
-// the phrase "escrow already settled".
-func IsUpstreamEscrowSettled(err error) bool {
-	if status, code, message, ok := ConnectApplicationStatus(err); ok {
-		if strings.EqualFold(strings.TrimSpace(code), DevshardErrorEscrowSettled) {
-			return true
-		}
-		return status == http.StatusConflict && strings.Contains(message, "escrow already settled")
-	}
-	var ue *UpstreamStatusError
-	if !errors.As(err, &ue) {
-		return false
-	}
-	if ue.DevshardError == DevshardErrorEscrowSettled {
-		return true
-	}
-	return ue.StatusCode == http.StatusConflict &&
-		strings.Contains(ue.Body, "escrow already settled")
 }
 
 func DefaultClientConfig() ClientConfig {

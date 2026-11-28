@@ -16,6 +16,7 @@ import (
 	"devshard/cmd/gateway/engine"
 	"devshard/cmd/gateway/filters"
 	"devshard/cmd/gateway/store"
+	"devshard/cmd/gateway/store/sqlite"
 )
 
 func sendTime() time.Time { return time.Unix(1700000000, 0).UTC() }
@@ -237,13 +238,13 @@ func TestTheLookupAnswersItsDocumentedStatuses(t *testing.T) {
 }
 
 // Test flow:
-//  1. Record a completed race, then disable the gateway's modes.
+//  1. Record a completed race, then switch the gateway off.
 //  2. GET the request accounting by ID as an admin.
-//  3. Assert the response is still 200, so the lookup route stays available while the gateway itself is disabled.
-func TestTheLookupStaysAvailableWhileTheGatewayIsDisabled(t *testing.T) {
+//  3. Assert the response is still 200, so the lookup route stays available while the gateway itself is off.
+func TestTheLookupStaysAvailableWhileTheGatewayIsOff(t *testing.T) {
 	live := newHarness(t)
 	NewRaceLedger(live.accounting).RecordRequest(completedRace())
-	live.swapConfig(func(configuration *config.Config) { configuration.Modes.Disabled = true })
+	live.swapConfig(func(configuration *config.Config) { configuration.Modes.Enabled = false })
 
 	response := live.request(t, http.MethodGet, "/v1/requests/request-1", "", adminHeaders())
 
@@ -256,9 +257,9 @@ func TestTheLookupStaysAvailableWhileTheGatewayIsDisabled(t *testing.T) {
 func wedgedLedger(t *testing.T) (*store.Ledger, func()) {
 	t.Helper()
 	storageDir := t.TempDir()
-	gatewayStore, err := store.Open(storageDir)
+	gatewayStore, err := sqlite.Open(storageDir)
 	if err != nil {
-		t.Fatalf("store.Open(): %v", err)
+		t.Fatalf("sqlite.Open(): %v", err)
 	}
 	ledger, err := gatewayStore.NewLedger(
 		store.Retention{MaxAge: time.Hour, MaxRows: 100},

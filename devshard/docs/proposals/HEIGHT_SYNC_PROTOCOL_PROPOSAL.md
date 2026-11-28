@@ -129,9 +129,7 @@ So main design decitions are made:
 - We trust heights in the future without additional mainnet proove if the height is close to the one we know is current. If there is a large disagreement between hosts on height (`height_in_the_future - known_height = |Δ| > D`) we use the full data from mainnet (block hash and validators signatures) to validate the height
 - If we find that any earlier provided by any host `height` doesn't match the oracle `block_hash` we start the dispute
 
-As the result we provide API at devshardd and devshardctl that gives latest
-height and block hash from the local (or courier-cached) oracle, plus audit /
-dispute surfaces for attribution.
+As the result we provide API at devshardd and the gateway that gives latest height and block hash from the local (or courier-cached) oracle, plus audit / dispute surfaces for attribution.
 
 ---
 
@@ -232,7 +230,7 @@ flowchart LR
         HSD -- "local oracle tip" --> CPOC_H
     end
 
-    subgraph user [Courier user / devshardctl]
+    subgraph user [Courier user / gateway]
         TIPS[HeightSyncPeerTips<br/>verbatim signed blobs] --> SCH_U[AnchorScheduler<br/>peer-tip source]
         SCH_U --> TX_U[transport.HTTPClient<br/>Carry, strip sig on request]
         TX_U -- "response inbound<br/>verify + cache" --> RX_U[Verify response Anchor<br/>RecordOriginWithBlob]
@@ -2333,7 +2331,7 @@ the test scenario that proves it (full catalog in
 | 24f | **Dirty floor after L6** — a host-signed garbage `(H, hash)` becomes `F`; L6 later `DEFERRED_FAIL`s it | L6 names the originator and does **not** rewind `F` (lagging oracles must not split). Producers keep carrying it at any distance, so logical time stays dirty but the escrow keeps applying diffs and stamping. **Phase F** MUST clean the floor after L6/Strong detection without `INVALID`-ing the diff (§14 *Garbage cleanup after L6*) — now the only repair path, since there is no raise bound to stall behind | ⏳ H109. Slash, if any, does not restore the clock |
 | 25 | Pre-signing a **future** height to look fresher than it is | `observed_block_hash` for an unmined height cannot be produced; L6 never confirms the pair and eventually returns `DEFERRED_FAIL` | Planned: `TestLogPlane_FutureDatedStampDeferredFail` |
 | 26 | **Replay-time invalidation** — a party re-presents an old but honest session hoping a `D`-band or freshness rule rejects it, or an implementation that wrongly evaluates freshness at replay time | Only pure-`Diff` checks may invalidate (§14 tier table): L5a is admission-only, L4 is skipped without an envelope, so a historical session replays with identical verdicts regardless of when it is replayed | Planned: `TestLogPlane_HistoricalReplayNoInvalidation` |
-| 27 | Gateway mints `(H, hash)` from its own chain read (empty originator) and emits it as a request-leg Anchor | Forbidden: the user is a courier (§6, §13). Defence: scheduler is `PeerTipOracleSource`; `DEVSHARD_GATEWAY_CHAIN_ORACLE` (default off) wires a follower as `HeightSyncLogOracle` only; seed still required so `HeightSyncEvidenceFor` has a host blob. A mismatch on a gateway-minted pair would be `DISPUTE_CARRIER` against the user — the wrong party | Planned: H105–H108 (`TestGatewayChainOracle_*` in `cmd/devshardctl/heightsync_env_test.go` / seed tests). Catalog: [`height-sync-tests.md`](../height-sync-tests.md) §7.8 |
+| 27 | Gateway mints `(H, hash)` from its own chain read (empty originator) and emits it as a request-leg Anchor | Forbidden: the user is a courier (§6, §13). Defence: scheduler is `PeerTipOracleSource`; `DEVSHARD_GATEWAY_CHAIN_ORACLE` (default off) wires a follower as `HeightSyncLogOracle` only; seed still required so `HeightSyncEvidenceFor` has a host blob. A mismatch on a gateway-minted pair would be `DISPUTE_CARRIER` against the user — the wrong party | Planned: H105–H108 (`cmd/gateway/heights` and seed tests). Catalog: [`height-sync-tests.md`](../height-sync-tests.md) §7.7 |
 
 **Out-of-scope adversaries:**
 

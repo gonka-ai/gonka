@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestGatewayChat verifies devshardctl pooled /v1/chat/completions reaches mock-openai
+// TestGatewayChat verifies gateway /v1/chat/completions reaches mock-openai
 // through versiond-router and devshardd for both non-stream and SSE stream responses.
 func TestGatewayChat(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
@@ -22,7 +22,7 @@ func TestGatewayChat(t *testing.T) {
 	client := harness.GatewayChatClient()
 	t.Cleanup(func() {
 		if t.Failed() {
-			harness.DumpComposeLogs(t, stack, "devshardctl", "versiond-0", "versiond-1", "mock-openai-0")
+			harness.DumpComposeLogs(t, stack, "gateway", "versiond-0", "versiond-1", "mock-openai-0")
 		}
 	})
 	harness.WaitStackHealthy(t, stack, eps)

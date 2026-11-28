@@ -10,6 +10,9 @@ const (
 	RequestIDHeader = "X-Request-Id"
 )
 
+// The content type of a streamed reply.
+const contentTypeEventStream = "text/event-stream"
+
 // How a finished request was delivered. A stream commits 200 on its first byte, so this is the only
 // place that tells a reply the client can retry from one it cannot.
 const (
@@ -24,9 +27,26 @@ const (
 	cacheRefusedWriteFailed = "write_failed"
 	cacheRefusedRaceFailed  = "race_failed"
 	cacheRefusedNoEscrow    = "no_escrow"
+	cacheRefusedInvalidated = "invalidated"
 )
 
 const cacheResultStored = "stored"
+
+const (
+	cacheControlHeader      = "Cache-Control"
+	directiveListSeparator  = ","
+	directiveValueSeparator = "="
+)
+
+type cacheDirective string
+
+const (
+	cacheDirectiveNone    cacheDirective = ""
+	cacheDirectiveNoCache cacheDirective = "no-cache"
+	cacheDirectiveNoStore cacheDirective = "no-store"
+)
+
+const servedNonceNone uint64 = 0
 
 // Why a request was captured. Capture has these two triggers and no others.
 const (
@@ -53,6 +73,9 @@ const (
 	phaseNameSettlement = "settlement"
 	phaseNameUnknown    = "unknown"
 )
+
+// What /v1/status says the process is; the PoC request mode is reported beside it, not in its place.
+const statusMode = "gateway"
 
 type (
 	apiKeySource string

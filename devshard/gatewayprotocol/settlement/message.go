@@ -1,4 +1,4 @@
-// Package settlement holds the settle message both gateways post, the slot order of its lists, the signatures it posts and the settlement root. See README.md.
+// Package settlement holds the settle message the gateway posts, the slot order of its lists, the signatures it posts and the settlement root. See README.md.
 package settlement
 
 // Message is a settle payload with binary fields already decoded; with the settler it maps onto MsgSettleDevshardEscrow field for field, with HostStat carrying Validated and Finished as fields 7 and 8 of a host-stats entry.

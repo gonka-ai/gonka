@@ -74,7 +74,7 @@ func SendStreamingBody(t *testing.T, client *http.Client, clientURL string, body
 
 	rawBody, events := readSSEEvents(t, resp.Body)
 	DebugLogf(t, "streaming completion status=%d content_type=%q body=%s", resp.StatusCode, resp.Header.Get("Content-Type"), rawBody)
-	require.Less(t, resp.StatusCode, 300, "streaming completion returned %d: %s", resp.StatusCode, rawBody)
+	require.Less(t, resp.StatusCode, http.StatusMultipleChoices, "streaming completion returned %d: %s", resp.StatusCode, rawBody)
 
 	return StreamResponse{
 		ContentType: resp.Header.Get("Content-Type"),
@@ -143,95 +143,62 @@ func readSSEEvents(t *testing.T, body io.Reader) (string, []string) {
 	return raw.String(), events
 }
 
-// DriveUntilValidationObserved waits until one slot appears in validated_by on
-// at least two inferences. validateAsync publishes MsgValidation after the
-// HTTP response, so each check drains host mempools with SyncHosts instead of
-// only spraying extra completions at 250ms.
-func DriveUntilValidationObserved(t *testing.T, client *http.Client, clientURL string) {
+// EscrowRoute is where the gateway serves one escrow's own routes.
+func EscrowRoute(clientURL, escrowID string) string {
+	return clientURL + "/devshard/" + escrowID
+}
+
+// DriveUntilValidationObserved sends completions until one slot of the escrow has validated two inferences.
+func DriveUntilValidationObserved(t *testing.T, client *http.Client, clientURL, escrowURL string) {
 	t.Helper()
 	const maxExtraCompletions = 20
 	const validationTarget = 2
-	const drainTimeout = 3 * time.Second
-	const drainInterval = 250 * time.Millisecond
-
+	var validations map[uint32]int
 	for extra := 0; extra <= maxExtraCompletions; extra++ {
-		reached, summary := drainUntilInferenceValidationTarget(t, client, clientURL, validationTarget, drainTimeout, drainInterval)
-		if reached {
-			return
-		}
-		if extra == maxExtraCompletions {
-			t.Fatalf("no host reached at least %d completed validations before finalize after %d extra completion rounds: %s",
-				validationTarget, maxExtraCompletions, summary)
+		validations = ValidationsBySlot(t, client, escrowURL)
+		for _, count := range validations {
+			if count >= validationTarget {
+				return
+			}
 		}
 		SendCompletion(t, client, clientURL, fmt.Sprintf("validation probe %d", extra+1))
 	}
+	t.Fatalf("no slot validated %d inferences after %d extra completions: %v",
+		validationTarget, maxExtraCompletions, validations)
 }
 
-func drainUntilInferenceValidationTarget(t *testing.T, client *http.Client, clientURL string, target uint64, timeout, interval time.Duration) (bool, string) {
+// ValidationsBySlot counts, per slot, the escrow's inferences that slot validated.
+func ValidationsBySlot(t *testing.T, client *http.Client, escrowURL string) map[uint32]int {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	check := func() (bool, string) {
-		t.Helper()
-		state := GetJSON(t, client, clientURL+"/v1/debug/inferences")
-		reached, summary := HasInferenceValidationTarget(t, state, target)
-		DebugLogf(t, "inference validation evidence before finalize target=%d reached=%t (%s)",
-			target, reached, summary)
-		return reached, summary
+	resp := GetRaw(t, client, escrowURL+DebugInferencesRoute, AdminAPIKey)
+	require.Equal(t, http.StatusOK, resp.StatusCode, "reading debug inferences: %s", resp.Body)
+	var listing struct {
+		Inferences []struct {
+			Record struct {
+				ValidatedBy types.Bitmap128 `json:"validated_by"`
+			} `json:"record"`
+		} `json:"inferences"`
 	}
-	for {
-		reached, summary := check()
-		if reached {
-			return true, summary
+	require.NoError(t, json.Unmarshal([]byte(resp.Body), &listing), "parsing debug inferences: %s", resp.Body)
+	validations := map[uint32]int{}
+	for _, inference := range listing.Inferences {
+		for _, slot := range inference.Record.ValidatedBy.SetBits() {
+			validations[slot]++
 		}
-		expired := !time.Now().Before(deadline)
-		// Compose mempool validations/finishes. The final SyncHosts after the
-		// drain window closes the hole where validateAsync published too late
-		// for the previous compose. Best-effort: a transient 500 should not
-		// abort a drain that can succeed on the next tick.
-		resp := PostJSONRaw(t, client, clientURL+"/v1/debug/sync-hosts", map[string]any{}, AdminAPIKey)
-		if resp.StatusCode >= 300 {
-			DebugLogf(t, "sync-hosts during validation drain status=%d body=%s", resp.StatusCode, resp.Body)
-		}
-		if expired {
-			return check()
-		}
-		time.Sleep(interval)
 	}
+	return validations
 }
 
-func LatestSessionNonce(t *testing.T, client *http.Client, clientURL string) uint64 {
+// GetSignatureStatus reads which slots signed each nonce of the escrow.
+func GetSignatureStatus(t *testing.T, client *http.Client, escrowURL string) map[string]any {
 	t.Helper()
-	state := GetJSON(t, client, clientURL+"/v1/state")
-	session, ok := state["session"].(map[string]any)
-	require.True(t, ok, "state session should be an object")
-	return NumericField(t, session, "latest_nonce")
+	return GetJSON(t, client, escrowURL+"/v1/debug/signatures")
 }
 
-// EscrowSessionState reads an escrow's balance and latest nonce by id from either driver: devshardctl nests them under session, the gateway does not.
-func EscrowSessionState(t *testing.T, client *http.Client, clientURL, escrowID string, isGateway bool) (balance, latestNonce uint64) {
+// CollectSignatures asks the escrow's hosts for their signatures on one nonce.
+func CollectSignatures(t *testing.T, client *http.Client, escrowURL string, nonce uint64) map[string]any {
 	t.Helper()
-	state := GetJSON(t, client, clientURL+"/devshard/"+escrowID+"/v1/state")
-	if isGateway {
-		return NumericField(t, state, "balance"), NumericField(t, state, "latest_nonce")
-	}
-	session, ok := state["session"].(map[string]any)
-	require.True(t, ok, "state session should be an object")
-	return NumericField(t, session, "balance"), NumericField(t, session, "latest_nonce")
-}
-
-func GetSignatureStatus(t *testing.T, client *http.Client, clientURL string) map[string]any {
-	t.Helper()
-	return GetJSON(t, client, clientURL+"/v1/debug/signatures")
-}
-
-func GetStatus(t *testing.T, client *http.Client, clientURL string) map[string]any {
-	t.Helper()
-	return GetJSON(t, client, clientURL+"/v1/status")
-}
-
-func CollectSignatures(t *testing.T, client *http.Client, clientURL string, nonce uint64) map[string]any {
-	t.Helper()
-	return PostJSON(t, client, fmt.Sprintf("%s/v1/debug/signatures/collect?nonce=%d", clientURL, nonce), map[string]any{})
+	return PostJSON(t, client, fmt.Sprintf("%s/v1/debug/signatures/collect?nonce=%d", escrowURL, nonce), map[string]any{})
 }
 
 type GossipNonceStatus struct {
@@ -302,13 +269,57 @@ func timeoutInferenceInDiffs(t *testing.T, diffs []any) (TimeoutInferenceTransac
 	return TimeoutInferenceTransaction{}, false
 }
 
-func InferenceStatus(t *testing.T, client *http.Client, clientURL string, inferenceID uint64) (map[string]any, bool) {
+// InferenceStatus reads one inference of the escrow by its nonce, sealed or live.
+func InferenceStatus(t *testing.T, client *http.Client, escrowURL string, nonce uint64) (map[string]any, bool) {
 	t.Helper()
-	state := GetJSON(t, client, clientURL+"/v1/debug/inferences")
-	inferences, ok := state["inferences"].(map[string]any)
-	require.True(t, ok, "debug inferences should be an object")
-	inference, ok := inferences[fmt.Sprintf("%d", inferenceID)].(map[string]any)
-	return inference, ok
+	for _, entry := range DebugInferenceEntries(t, client, escrowURL) {
+		if NumericField(t, entry, "nonce") == nonce {
+			return entry, true
+		}
+	}
+	return nil, false
+}
+
+// CostOutsideMisses sums the actual cost of every escrow inference that did not time out or miss.
+func CostOutsideMisses(t *testing.T, client *http.Client, escrowURL string) uint64 {
+	t.Helper()
+	var cost uint64
+	for _, entry := range DebugInferenceEntries(t, client, escrowURL) {
+		if entry["status"] == InferenceStatusTimedOut {
+			continue
+		}
+		record, isRecord := entry["record"].(map[string]any)
+		require.True(t, isRecord, "debug inference entry should carry its record: %v", entry)
+		cost += optionalNumericField(t, record, "actual_cost")
+	}
+	return cost
+}
+
+// TimedOutInferences lists the escrow's timed-out inferences, sealed or live.
+func TimedOutInferences(t *testing.T, client *http.Client, escrowURL string) []map[string]any {
+	t.Helper()
+	var timedOut []map[string]any
+	for _, entry := range DebugInferenceEntries(t, client, escrowURL) {
+		if entry["status"] == InferenceStatusTimedOut {
+			timedOut = append(timedOut, entry)
+		}
+	}
+	return timedOut
+}
+
+// DebugInferenceEntries reads every entry of the escrow's debug inference list, sealed or live.
+func DebugInferenceEntries(t *testing.T, client *http.Client, escrowURL string) []map[string]any {
+	t.Helper()
+	listing := GetJSON(t, client, escrowURL+DebugInferencesRoute)
+	inferences, ok := listing["inferences"].([]any)
+	require.True(t, ok, "debug inferences should be an array: %v", listing)
+	entries := make([]map[string]any, 0, len(inferences))
+	for _, raw := range inferences {
+		entry, isObject := raw.(map[string]any)
+		require.True(t, isObject, "debug inference entry should be an object, got %T", raw)
+		entries = append(entries, entry)
+	}
+	return entries
 }
 
 func GetGossipNonceStatus(t *testing.T, client *http.Client, hostURL, routePrefix string, nonce uint64) GossipNonceStatus {
@@ -325,25 +336,44 @@ func GetGossipNonceStatus(t *testing.T, client *http.Client, hostURL, routePrefi
 	}
 }
 
-// The gateway refuses finalize with 409 while the escrow still has work in
-// flight. Race cleanup outlives the winning completion: it waits up to
-// SecondaryWaitAfterWinner plus a short cancel join for speculative losers.
-// Not-yet-due HandleTimeout waits sleep off pendingRaceCleanup and only hold
-// it briefly for the vote at the protocol deadline. Wait for the drain, then
-// finalize.
+// InferenceStatusTimedOut is how the gateway's debug routes name a timed-out inference. DebugStateRoute and
+// DebugInferencesRoute are the escrow-scoped debug reads, appended to an escrow URL.
 const (
-	finalizeDrainWait = 6 * time.Minute
-	finalizeDrainPoll = 100 * time.Millisecond
+	DebugStateRoute         = "/v1/debug/state"
+	DebugInferencesRoute    = "/v1/debug/inferences"
+	finalizeBusyWait        = 6 * time.Minute
+	finalizeBusyPoll        = 100 * time.Millisecond
+	InferenceStatusTimedOut = "timed_out"
+	escrowPhaseActive       = "active"
 )
 
-func FinalizeSession(t *testing.T, client *http.Client, clientURL string) map[string]any {
+// FinalizeSession finalizes the escrow, retrying while the gateway answers 409 because work is still in flight.
+func FinalizeSession(t *testing.T, client *http.Client, escrowURL string) map[string]any {
 	t.Helper()
 	DebugLogf(t, "finalizing devshard session")
-	settlement := postFinalizeRetryingConflict(t, client, clientURL+"/v1/finalize")
-	settlementJSON, err := json.MarshalIndent(settlement, "", "  ")
-	require.NoError(t, err)
-	t.Logf("SettlementContract:\n%s", settlementJSON)
-	return settlement
+	deadline := time.Now().Add(finalizeBusyWait)
+	for {
+		resp := PostJSONRaw(t, client, escrowURL+"/v1/finalize", map[string]any{}, AdminAPIKey)
+		if resp.StatusCode != http.StatusConflict || !time.Now().Before(deadline) {
+			require.Less(t, resp.StatusCode, http.StatusMultipleChoices, "POST finalize returned %d: %s", resp.StatusCode, resp.Body)
+			require.NotNil(t, resp.JSON, "finalize answer should be JSON: %s", resp.Body)
+			return resp.JSON
+		}
+		DebugLogf(t, "finalize refused with 409, retrying: %s", resp.Body)
+		time.Sleep(finalizeBusyPoll)
+	}
+}
+
+// RequireFinalized asserts the escrow left the active phase at a finalize nonce its slots reached quorum on.
+func RequireFinalized(t *testing.T, client *http.Client, escrowURL string) {
+	t.Helper()
+	finalized := GetJSON(t, client, escrowURL+"/v1/finalize")
+	require.NotEqual(t, escrowPhaseActive, finalized["phase"], "a finalized escrow is still active: %v", finalized)
+	finalizeNonce := NumericField(t, finalized, "finalize_nonce")
+	require.NotZero(t, finalizeNonce, "a finalized escrow names no finalize nonce: %v", finalized)
+	signatures := GetSignatureStatus(t, client, escrowURL)
+	require.GreaterOrEqual(t, NumericField(t, signatures, "highest_quorum_nonce"), finalizeNonce,
+		"the finalize nonce never reached signature quorum: %v", signatures)
 }
 
 // LeakyHostAnswer carries every field the response side hides, at the depths vLLM writes them.
@@ -415,19 +445,4 @@ func ListedDevshard(t *testing.T, client *http.Client, clientURL, escrowID, bear
 	}
 	t.Fatalf("the escrow listing carries no escrow %s: %s", escrowID, resp.Body)
 	return DevshardRow{}
-}
-
-func postFinalizeRetryingConflict(t *testing.T, client *http.Client, url string) map[string]any {
-	t.Helper()
-	deadline := time.Now().Add(finalizeDrainWait)
-	for {
-		resp := PostJSONRaw(t, client, url, map[string]any{}, AdminAPIKey)
-		if resp.StatusCode != http.StatusConflict || !time.Now().Before(deadline) {
-			require.Less(t, resp.StatusCode, 300, "POST %s returned %d: %s", url, resp.StatusCode, resp.Body)
-			require.NotNil(t, resp.JSON, "response body should be JSON: %s", resp.Body)
-			return resp.JSON
-		}
-		DebugLogf(t, "finalize refused with 409, retrying: %s", resp.Body)
-		time.Sleep(finalizeDrainPoll)
-	}
 }
