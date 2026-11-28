@@ -422,24 +422,30 @@ func (e *Engine) queueVotes(outcome RaceOutcome, poster TimeoutPoster, registrat
 	due := func() time.Time { return earliestDue(steps, poster) }
 	deadline := e.finishRechecked(steps, registration, due)
 	unripe := func() bool { return deadline().After(e.settles.now()) }
+	var settle func()
 	task := settleTask{
 		deadline: deadline,
 		wake:     e.stopping,
 		post: func() {
 			// A vote not yet due at Stop is left owed in the store or to the next boot's sweep.
 			if e.stopping.Err() != nil && unripe() {
-				markSettled()
+				settle = markSettled
 				return
 			}
 			ctx, release := e.cancelUnripeOnStop(settleContext(outcome.RequestID), unripe)
 			defer release()
 			pass := settleSteps(ctx, poster, steps, outcome.Lifecycle.EscrowMissing, e.reportTimeout)
 			if ctx.Err() != nil {
-				markSettled()
+				settle = markSettled
 				return
 			}
 			e.payRefusals(outcome.EscrowID, steps, pass.pending())
-			e.followVotes(outcome, poster, registration, pass, afterPost, markSettled, round)
+			settle = e.followVotes(outcome, poster, registration, pass, afterPost, markSettled, round)
+		},
+		settled: func() {
+			if settle != nil {
+				settle()
+			}
 		},
 	}
 	e.settles.Add(task, int(e.deps.Config.Load().Engine.MaxConcurrentTimeoutVotes))
@@ -453,42 +459,6 @@ func (e *Engine) cancelUnripeOnStop(ctx context.Context, unripe func() bool) (co
 		}
 	})
 	return ctx, func() { stop(); cancel() }
-}
-
-func (e *Engine) followVotes(outcome RaceOutcome, poster TimeoutPoster, registration *raceRegistration, pass votePass, afterPost, markSettled func(), round int) {
-	groups := voteGroups(pass.deferred, poster)
-	if len(groups) == 0 {
-		afterPost()
-		e.retryRefusedVotes(outcome, poster, registration, pass.retries, markSettled, round)
-		return
-	}
-	deferredPosted := afterAll(len(groups), afterPost)
-	settled := afterAll(len(groups)+1, markSettled)
-	for _, group := range groups {
-		e.queueVotes(outcome, poster, registration, group.steps, deferredPosted, settled, round)
-	}
-	e.retryRefusedVotes(outcome, poster, registration, pass.retries, settled, round)
-}
-
-func (e *Engine) retryRefusedVotes(outcome RaceOutcome, poster TimeoutPoster, registration *raceRegistration, steps []TimeoutStep, markSettled func(), round int) {
-	if len(steps) == 0 || round >= refusedVoteRetries || e.stopping.Err() != nil {
-		if e.stopping.Err() == nil {
-			e.payRefusals(outcome.EscrowID, steps, nil)
-		}
-		markSettled()
-		return
-	}
-	retryAt := e.settles.now().Add(refusedVoteFirstRetryDelay << round)
-	task := settleTask{
-		deadline: func() time.Time { return retryAt },
-		wake:     e.stopping,
-		post: func() {
-			pass := postTimeouts(settleContext(outcome.RequestID), poster, steps, outcome.Lifecycle.EscrowMissing, e.reportTimeout)
-			e.payRefusals(outcome.EscrowID, steps, pass.pending())
-			e.followVotes(outcome, poster, registration, pass, func() {}, markSettled, round+1)
-		},
-	}
-	e.settles.Add(task, int(e.deps.Config.Load().Engine.MaxConcurrentTimeoutVotes))
 }
 
 func (e *Engine) reportTimeout(event TimeoutEvent) {

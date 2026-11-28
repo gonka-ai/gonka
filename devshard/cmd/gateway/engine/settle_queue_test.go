@@ -226,6 +226,30 @@ func TestNoVoteIsLostWhenRacesOweMoreThanTheLimit(t *testing.T) {
 }
 
 // Test flow:
+//  1. Add two votes due now under a limit of one, each recording `Owed` from its `settled` hook; the first vote's post fires the second timer.
+//  2. Fire the first timer, so the second vote finds the place taken, waits in the ready list and is handed on from the first one's place.
+//  3. Assert each hook saw the queue owing only the votes not yet through, never its own vote.
+func TestAVoteIsNoLongerOwedWhenItsSettledHookRuns(t *testing.T) {
+	harness := newQueueHarness()
+	var owedAtSettled []int64
+	for index := range 2 {
+		post := func() {}
+		if index == 0 {
+			post = func() { harness.pending[1].fire() }
+		}
+		harness.queue.Add(settleTask{
+			deadline: func() time.Time { return harness.now() },
+			post:     post,
+			settled:  func() { owedAtSettled = append(owedAtSettled, harness.queue.Owed()) },
+		}, 1)
+	}
+
+	harness.pending[0].fire()
+
+	require.Equal(t, []int64{1, 0}, owedAtSettled, "a vote must be released from the owed count before its settled hook runs")
+}
+
+// Test flow:
 //  1. Add a vote due in a minute, then move its deadline out to an hour before its timer fires.
 //  2. Fire the original timer; assert nothing posts and the queue rearmed a new timer for the later deadline.
 //  3. Move the deadline back into the past and fire the new timer; assert the vote now posts.

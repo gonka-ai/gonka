@@ -13,6 +13,7 @@ const firesAtOnce time.Duration = 0
 type settleTask struct {
 	deadline func() time.Time
 	post     func()
+	settled  func()
 	wake     context.Context
 }
 
@@ -26,7 +27,7 @@ type settleQueue struct {
 	owed atomic.Int64
 
 	mu      sync.Mutex
-	ready   []func()
+	ready   []settleTask
 	posting int
 }
 
@@ -65,42 +66,45 @@ func (q *settleQueue) fire(task settleTask, limit int) {
 		q.arm(task, limit)
 		return
 	}
-	q.due(task.post, limit)
+	q.due(task, limit)
 }
 
 // Owed reports the votes taken and not yet posted.
 func (q *settleQueue) Owed() int64 { return q.owed.Load() }
 
 // due posts when a place is free and queues the vote otherwise.
-func (q *settleQueue) due(post func(), limit int) {
+func (q *settleQueue) due(task settleTask, limit int) {
 	q.mu.Lock()
 	if limit > 0 && q.posting >= limit {
-		q.ready = append(q.ready, post)
+		q.ready = append(q.ready, task)
 		q.mu.Unlock()
 		return
 	}
 	q.posting++
 	q.mu.Unlock()
-	for post != nil {
-		post = q.postThenTake(post)
+	for more := true; more; {
+		task, more = q.postThenTake(task)
 	}
 }
 
 // postThenTake takes the next vote or gives the place back, under one lock.
-func (q *settleQueue) postThenTake(post func()) func() {
-	post()
+func (q *settleQueue) postThenTake(task settleTask) (settleTask, bool) {
+	task.post()
 	q.owed.Add(-1)
+	if task.settled != nil {
+		task.settled()
+	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if len(q.ready) == 0 {
 		q.posting--
-		return nil
+		return settleTask{}, false
 	}
 	next := q.ready[0]
-	q.ready[0] = nil
+	q.ready[0] = settleTask{}
 	q.ready = q.ready[1:]
 	if len(q.ready) == 0 {
 		q.ready = nil
 	}
-	return next
+	return next, true
 }
