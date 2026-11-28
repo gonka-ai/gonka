@@ -261,15 +261,19 @@ func BenchmarkRaisedKnobCeilings(b *testing.B) {
 		body         func(b *testing.B) []byte
 		toolsCount   int
 		patternBytes int
+		rejected     bool
 	}{
-		{"plain_conversation_10MiB", plainConversationBody, defaultToolsMaxCount, defaultPatternBudgetBytes},
-		{"plain_single_string_10MiB", func(*testing.B) []byte { return plainSingleStringBody() }, defaultToolsMaxCount, defaultPatternBudgetBytes},
+		{"plain_conversation_10MiB", plainConversationBody, defaultToolsMaxCount, defaultPatternBudgetBytes, false},
+		{"plain_single_string_10MiB", func(*testing.B) []byte { return plainSingleStringBody() }, defaultToolsMaxCount, defaultPatternBudgetBytes, false},
 		{"defaults_dense_tools_and_heavy_patterns", func(b *testing.B) []byte {
 			return denseToolsBody(b, defaultToolsMaxCount, defaultPatternBudgetBytes)
-		}, defaultToolsMaxCount, defaultPatternBudgetBytes},
+		}, defaultToolsMaxCount, defaultPatternBudgetBytes, false},
 		{"ceilings_dense_tools_and_heavy_patterns", func(b *testing.B) []byte {
 			return denseToolsBody(b, MaxToolsMaxCount, MaxPatternBudgetBytes)
-		}, MaxToolsMaxCount, MaxPatternBudgetBytes},
+		}, MaxToolsMaxCount, MaxPatternBudgetBytes, false},
+		{"tiny_messages_at_message_cap", func(*testing.B) []byte { return tinyMessagesBody(messagesMaxEntries) }, defaultToolsMaxCount, defaultPatternBudgetBytes, false},
+		{"content_parts_at_member_cap", func(*testing.B) []byte { return tinyContentPartsBody(MaxContainerMembers) }, defaultToolsMaxCount, defaultPatternBudgetBytes, false},
+		{"wide_object_at_member_cap", func(*testing.B) []byte { return wideObjectBody(MaxContainerMembers - 2) }, defaultToolsMaxCount, defaultPatternBudgetBytes, true},
 	}
 	for _, testCase := range cases {
 		body := testCase.body(b)
@@ -278,10 +282,29 @@ func BenchmarkRaisedKnobCeilings(b *testing.B) {
 			b.SetBytes(int64(len(body)))
 			b.ReportAllocs()
 			for b.Loop() {
-				if _, err := NormalizeRequest(body, options); err != nil {
-					b.Fatal(err)
+				_, err := NormalizeRequest(body, options)
+				if (err != nil) != testCase.rejected {
+					b.Fatalf("NormalizeRequest() = %v, want rejected = %v", err, testCase.rejected)
 				}
 			}
 		})
 	}
+}
+
+func tinyMessagesBody(count int) []byte {
+	return []byte(`{"model":"m","messages":[` + strings.TrimSuffix(strings.Repeat(`{"role":"user","content":"x"},`, count), ",") + `]}`)
+}
+
+func tinyContentPartsBody(count int) []byte {
+	return []byte(`{"model":"m","messages":[{"role":"user","content":[` + strings.TrimSuffix(strings.Repeat(`{"type":"text","text":"x"},`, count), ",") + `]}]}`)
+}
+
+func wideObjectBody(extraKeys int) []byte {
+	var body strings.Builder
+	body.WriteString(`{"model":"m","messages":[{"role":"user","content":"x"}]`)
+	for index := range extraKeys {
+		body.WriteString(`,"k` + strconv.Itoa(index) + `":0`)
+	}
+	body.WriteString(`}`)
+	return []byte(body.String())
 }

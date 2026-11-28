@@ -70,11 +70,11 @@ Rules run in `parameterTable` order, so where a row sits is behaviour rather tha
 
 ## Structural bounds before the decode
 
-Four bounds run before anything is decoded: `MaxBodyBytes` (10 MiB) on the raw body, `MaxNestingDepth` (32), `MaxStructuralNodes` (250,000) counting containers and elements, and `MaxContainerMembers` (4,096) on the members of any one object or array.
+Four bounds run before anything is decoded: `MaxBodyBytes` (10 MiB) on the raw body, `MaxNestingDepth` (32), `MaxStructuralNodes` (250,000) counting containers and elements, and `MaxContainerMembers` (65,536) on the members of any one object or array.
 
 `ensureStructuralBounds` scans the body byte by byte in a single pass, tracking string literals and escapes so that braces and commas inside a string are not counted. Each container counts its own members, so a nested container adds nothing to its parent. A closing bracket never drives the depth below zero, so an unbalanced body is bounded rather than rejected here — the decoder that follows is what rejects it.
 
-`MaxContainerMembers` is twice the 2,048-message limit and four times the `logit_bias` limit, so no container a rule bounds comes near it. It also caps the arrays no other rule counts: `stop_token_ids`, a message's content parts and its `tool_calls` carry at most 4,096 entries each. A body past it is refused with a 400 before the decode, which would otherwise build and sort one map of that size; it does not bound the total, which `MaxStructuralNodes` still does.
+`MaxContainerMembers` is twice the 32,768-message limit and 64 times the `logit_bias` limit, so no container a rule bounds comes near it. It also caps the arrays no other rule counts: `stop_token_ids`, a message's content parts and its `tool_calls` carry at most 65,536 entries each. A body past it is refused with a 400 before the decode, which would otherwise build and sort one map of that size; it does not bound the total, which `MaxStructuralNodes` still does.
 
 ## Which JSON decoder, and why
 
@@ -104,7 +104,7 @@ Numeric rules run through `sanitizeFloatField`, which coerces the field to float
 
 Collection rules:
 
-- `validListLength` bounds an array's length and, optionally, the length of its string elements. `messages` is capped at 2048 entries, `stop` at 16 entries of 256 bytes, `bad_words` at 64 entries of 128 bytes.
+- `validListLength` bounds an array's length and, optionally, the length of its string elements. `messages` is capped at 32768 entries, `stop` at 16 entries of 256 bytes, `bad_words` at 64 entries of 128 bytes.
 - `requireStringElements` rejects the first non-string element, reported as `<param>[<index>]`.
 - `dropBlankStringListElements` removes whitespace-only strings from `bad_words` and drops the field when nothing survives.
 - `validFloatMap` rejects `logit_bias` outright past 1024 raw entries, then drops individual entries outside `[-100, 100]` or non-finite, and drops the field once none survive.
@@ -178,7 +178,7 @@ Every built-in preset is a JSON file in [`presets/`](./presets), embedded into t
 | `parallel_tool_calls` | `keep`, `strip` | `keep` | `parallel_tool_calls` |
 | `reject_json_schema` | bool | false | `response_format` of type `json_schema` is a 400 |
 | `output_tokens_floor` | 0 to `MaxOutputTokensFloor` | 0 | `max_tokens`, `max_completion_tokens` |
-| `tools_max_count` | 1 to `MaxToolsMaxCount` (256) | 128 | the most entries `tools` may carry; a longer array is a 400 |
+| `tools_max_count` | 1 to `MaxToolsMaxCount` (256) | 256 | the most entries `tools` may carry; a longer array is a 400 |
 | `pattern_budget_bytes` | 1 to `MaxPatternBudgetBytes` (8192) | 4096 | the bytes of distinct pattern text one request may carry across every schema and `structured_outputs` regular expression |
 
 A budget cannot go with `thinking: force_on`, nor with its own `thinking_template_key` among the forced or denied kwargs: each would undo the silence below `force_zero_below`, and the model would then reason through a budget too small to answer in. `force_on` cannot go with its key among the forced or denied kwargs either, since the kwargs policy runs after it. The silence also applies when the gateway's own clamps (`absolute_max`, `content_headroom`) or its invented default bring the budget to 0; a client that asked for 0 itself keeps its kwargs as sent.
@@ -234,7 +234,7 @@ Four fields carry a nested payload, and each has its own bound family, kept sepa
 
 Every regular expression in one request shares a single budget of the profile's `pattern_budget_bytes` (4096 bytes by default, at most 8192) of distinct pattern text: each schema `pattern` and each key of a schema's `patternProperties` in `tools[].function.parameters`, `response_format.json_schema.schema` and `structured_outputs.json`, plus `structured_outputs.regex` and `structured_outputs.whitespace_pattern`. A pattern is charged by its length after its field's length cap and before it is parsed, and a pattern already seen earlier in the request, in any of those fields, is neither charged nor parsed again. The budget is bytes because parse cost follows pattern length: measured at up to about 16 µs and 5 KB per byte for the heaviest shapes (negated, case-folded Unicode classes and long alternations of classes), so a full default budget costs under 100 ms and about 20 MB and a full 8192-byte budget twice that, while a typical id or date pattern costs a few microseconds. A `patternProperties` key is a regular expression downstream, so it is held to the same rules as a `pattern`.
 
-`validTools` also bounds `tools` as one array, on top of each tool's own limits above: at most the profile's `tools_max_count` entries (128 by default, at most 256). Only the per-tool node cap applies to nodes: walking the largest request the per-tool limits allow (128 tools of 256 nodes) takes about 20 ms against about 260 ms to decode and validate the same body. The per-tool 64 KiB serialised-size cap is not shared; the 10 MiB request body limit bounds the total. The two ceilings are code constants set from `BenchmarkRaisedKnobCeilings`: a request that pairs the largest dense tool array the structural-node bound admits with the heaviest patterns that fill the ceiling budget costs about 3.5 times a plain 10 MiB body to decode and validate, against about 1.6 times at the defaults. Neither limit bounds what the host spends per tool, so a raised `tools_max_count` is a decision about the model's engine as well.
+`validTools` also bounds `tools` as one array, on top of each tool's own limits above: at most the profile's `tools_max_count` entries (256 by default, at most 256). Only the per-tool node cap applies to nodes, and the per-tool 64 KiB serialised-size cap is not shared; the 10 MiB request body limit bounds the total. The two ceilings are code constants set from `BenchmarkRaisedKnobCeilings`: a request that pairs the largest dense tool array the structural-node bound admits (256 tools, at the default as at the ceiling) with the heaviest patterns that fill the default budget costs about 520,000 allocations and 70 MB to decode and validate, and about 500,000 and 68 MB with the ceiling budget, against about 20,000 allocations and 80 to 115 MB for a plain 10 MiB body. A body at the member and message limits (65,534 extra top-level keys, which are decoded and then refused as unknown parameters, 32,768 one-word messages or 65,536 one-character content parts) costs about 100 ms and 20 to 37 MB, the wall time of the plain body. Neither limit bounds what the host spends per tool, so a raised `tools_max_count` is a decision about the model's engine as well.
 
 The walk distinguishes two key families. `schemaDataKeys` — `enum`, `const`, `default`, `examples`, `required`, `dependentRequired` — hold literal data, not child schemas, so the walker must not recurse into them. `schemaChildMapKeys` — `properties`, `patternProperties`, `dependentSchemas` — hold name-to-schema maps: each value is walked as its own child schema, and the wrapper map itself is not counted as an extra node.
 

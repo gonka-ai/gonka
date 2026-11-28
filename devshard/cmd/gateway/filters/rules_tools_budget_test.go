@@ -119,17 +119,17 @@ func realisticTools(count, uniformNodes, patternEvery int) []map[string]any {
 }
 
 // Test flow:
-//  1. Call NormalizeRequest with 129 small tools.
-//  2. Assert the request is rejected with a 400 naming the 128-entry limit.
+//  1. Call NormalizeRequest with 257 small tools.
+//  2. Assert the request is rejected with a 400 naming the 256-entry limit.
 func TestNormalizeRequestRejectsMoreThanMaxTools(t *testing.T) {
 	body := toolsBudgetBody(repeatedTools(defaultToolsMaxCount+1, `{"type":"function","function":{"name":"x"}}`))
 	_, err := normalizeToolsTestRequest(t, body)
-	requireToolsRejection(t, err, "tools: array length 129 exceeds limit 128")
+	requireToolsRejection(t, err, "tools: array length 257 exceeds limit 256")
 }
 
 // Test flow:
-//  1. Call NormalizeRequest with exactly 128 small tools that each carry a parameters object.
-//  2. Assert the request is accepted and all 128 tools are forwarded.
+//  1. Call NormalizeRequest with exactly 256 small tools that each carry a parameters object.
+//  2. Assert the request is accepted and all 256 tools are forwarded.
 func TestNormalizeRequestAcceptsExactlyMaxTools(t *testing.T) {
 	body := toolsBudgetBody(repeatedTools(defaultToolsMaxCount, toolWithParams(t, map[string]any{"type": "object"})))
 	document, err := normalizeToolsTestRequest(t, body)
@@ -143,9 +143,9 @@ func TestNormalizeRequestAcceptsExactlyMaxTools(t *testing.T) {
 }
 
 // Test flow:
-//  1. Build 128 tools whose parameters each carry exactly the per-tool node limit of 256 nodes.
+//  1. Build 256 tools whose parameters each carry exactly the per-tool node limit of 256 nodes.
 //  2. Call NormalizeRequest.
-//  3. Assert the request is accepted and keeps all 128 tools, proving no node total is enforced across tools.
+//  3. Assert the request is accepted and keeps all 256 tools, proving no node total is enforced across tools.
 func TestNormalizeRequestAcceptsMaxCountToolsAtThePerToolNodeLimit(t *testing.T) {
 	schema := wideToolSchema(toolsMaxNodes - 1)
 	if err := testToolsBounds().Check(schema); err != nil {

@@ -230,7 +230,7 @@ func TestDocumentParseIgnoresCommasInsideStringsForMemberCount(t *testing.T) {
 }
 
 // Test flow:
-//  1. Build an ordinary request with the largest containers the other rules allow: 2048 messages, 1024 logit_bias entries, 128 tools.
+//  1. Build an ordinary request with the largest containers the other rules allow: the most messages, logit_bias entries and tools the rules allow.
 //  2. Assert `MaxContainerMembers` is at least twice the message limit.
 //  3. Run the body through `ensureStructuralBounds` at the production limits and assert it is accepted, so the member limit leaves headroom over every legitimate container.
 func TestMemberLimitLeavesHeadroomOverTheLargestLegitimateContainers(t *testing.T) {

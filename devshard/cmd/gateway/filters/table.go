@@ -64,7 +64,7 @@ const (
 	userMaxLen             = 512
 	safetyIdentifierMaxLen = 512
 
-	messagesMaxEntries = 2048
+	messagesMaxEntries = 32768
 
 	stopMaxEntries  = 16
 	stopMaxEntryLen = 256

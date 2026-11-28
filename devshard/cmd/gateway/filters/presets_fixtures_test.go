@@ -7,7 +7,7 @@ const (
 
 	kimiOutputTokensFloor uint64 = 16
 
-	defaultToolsMaxCount      = 128
+	defaultToolsMaxCount      = 256
 	defaultPatternBudgetBytes = 4096
 
 	presetKimiForTest     PresetName = "kimi"

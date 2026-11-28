@@ -6,7 +6,7 @@
     "reasoning_effort": { "mode": "forward" },
     "tools": "allow",
     "parallel_tool_calls": "keep",
-    "tools_max_count": 128,
+    "tools_max_count": 256,
     "pattern_budget_bytes": 4096
   }
 }

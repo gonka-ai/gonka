@@ -55,7 +55,7 @@ Every filter a built-in preset uses is a knob; [`filters/README.md`](../filters/
 | `template_kwargs` | `{forced: {...}, denied: [...]}` | kwargs the template always gets, or never sees |
 | `tools`, `parallel_tool_calls`, `reject_json_schema` | `allow`/`reject`, `keep`/`strip`, bool | for a model served without tool calling or schema-guided decoding |
 | `force_zero_penalties`, `reject_structured_outputs`, `allow_safety_identifier`, `keep_reasoning_split`, `default_reasoning_split`, `output_tokens_floor` | as named | Kimi's and MiniMax's deltas, open to any model |
-| `tools_max_count`, `pattern_budget_bytes` | integers, 1 to 256 and 1 to 8192 | how many entries `tools` may carry (default 128) and how many bytes of distinct regular-expression text one request's schemas may carry (default 4096); any value from 1 up to the ceiling is accepted and a value outside that range is a 400; a setting that stores either knob is unreadable to a gateway release that predates it, which runs the model's built-in filters instead |
+| `tools_max_count`, `pattern_budget_bytes` | integers, 1 to 256 and 1 to 8192 | how many entries `tools` may carry (default 256) and how many bytes of distinct regular-expression text one request's schemas may carry (default 4096); any value from 1 up to the ceiling is accepted and a value outside that range is a 400; a setting that stores either knob is unreadable to a gateway release that predates it, which runs the model's built-in filters instead |
 
 A new model with a Kimi-like template but its own key and a cooler temperature is one call:
 

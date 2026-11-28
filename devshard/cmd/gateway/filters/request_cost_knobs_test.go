@@ -36,7 +36,7 @@ func smallTools(count int) string {
 
 // Test flow:
 //  1. Read the effective knobs of the default profile, of every preset in the catalog, and of a composed setting that names no request-cost knob.
-//  2. Assert each carries tools_max_count 128 and pattern_budget_bytes 4096, the values the rules enforced before the knobs existed.
+//  2. Assert each carries tools_max_count 256 and pattern_budget_bytes 4096.
 func TestRequestCostKnobsDefaultToTheFormerLimits(t *testing.T) {
 	effective := map[string]FilterKnobs{
 		"default_profile": (*Profile)(nil).Knobs(),
@@ -47,8 +47,8 @@ func TestRequestCostKnobsDefaultToTheFormerLimits(t *testing.T) {
 	}
 	for name, knobs := range effective {
 		t.Run(name, func(t *testing.T) {
-			if knobs.ToolsMaxCount == nil || *knobs.ToolsMaxCount != 128 {
-				t.Errorf("tools_max_count = %v, want 128", knobs.ToolsMaxCount)
+			if knobs.ToolsMaxCount == nil || *knobs.ToolsMaxCount != 256 {
+				t.Errorf("tools_max_count = %v, want 256", knobs.ToolsMaxCount)
 			}
 			if knobs.PatternBudgetBytes == nil || *knobs.PatternBudgetBytes != 4096 {
 				t.Errorf("pattern_budget_bytes = %v, want 4096", knobs.PatternBudgetBytes)
@@ -69,19 +69,21 @@ func TestToolsMaxCountKnobLowersTheLimit(t *testing.T) {
 }
 
 // Test flow:
-//  1. Send one tool more than the default limit to the default profile, then to a model storing tools_max_count at the ceiling.
-//  2. Assert the default profile rejects it and the raised model accepts it.
-//  3. Assert the raised model accepts exactly the ceiling and rejects one tool more, naming the ceiling.
-func TestToolsMaxCountKnobRaisesTheLimitUpToTheCeiling(t *testing.T) {
-	requireToolsRejection(t, normalizeWithCostKnobs(t, FilterKnobs{}, smallTools(defaultToolsMaxCount+1)), "tools: array length 129 exceeds limit 128")
-	knobs := FilterKnobs{ToolsMaxCount: pointerTo(MaxToolsMaxCount)}
-	if err := normalizeWithCostKnobs(t, knobs, smallTools(defaultToolsMaxCount+1)); err != nil {
-		t.Fatalf("129 tools under a raised limit = %v, want acceptance", err)
+//  1. Send exactly the default number of tools to the default profile and to a model storing tools_max_count at the ceiling.
+//  2. Assert both accept it, since the default is the ceiling.
+//  3. Send one tool more to both and assert each rejects it, naming the ceiling.
+func TestToolsMaxCountDefaultIsTheCeiling(t *testing.T) {
+	if defaultToolsMaxCount != MaxToolsMaxCount {
+		t.Fatalf("default %d is not the ceiling %d, so the test proves nothing", defaultToolsMaxCount, MaxToolsMaxCount)
 	}
-	if err := normalizeWithCostKnobs(t, knobs, smallTools(MaxToolsMaxCount)); err != nil {
-		t.Fatalf("%d tools at the ceiling = %v, want acceptance", MaxToolsMaxCount, err)
+	for name, knobs := range map[string]FilterKnobs{"default": {}, "ceiling": {ToolsMaxCount: pointerTo(MaxToolsMaxCount)}} {
+		t.Run(name, func(t *testing.T) {
+			if err := normalizeWithCostKnobs(t, knobs, smallTools(MaxToolsMaxCount)); err != nil {
+				t.Fatalf("%d tools = %v, want acceptance", MaxToolsMaxCount, err)
+			}
+			requireToolsRejection(t, normalizeWithCostKnobs(t, knobs, smallTools(MaxToolsMaxCount+1)), "tools: array length 257 exceeds limit 256")
+		})
 	}
-	requireToolsRejection(t, normalizeWithCostKnobs(t, knobs, smallTools(MaxToolsMaxCount+1)), "tools: array length 257 exceeds limit 256")
 }
 
 // Test flow:

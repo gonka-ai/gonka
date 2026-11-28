@@ -21,7 +21,7 @@ const (
 
 	MaxStructuralNodes = 250_000
 
-	MaxContainerMembers = 4096
+	MaxContainerMembers = 65536
 )
 
 // Document wraps a decoded request body. No mutex: the pipeline runs single-goroutine per request.

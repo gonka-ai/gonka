@@ -210,7 +210,7 @@ func TestAdminFiltersRejectsUnknownFilter(t *testing.T) {
 
 // Test flow:
 //  1. PUT tools_max_count 64 and pattern_budget_bytes 2048 for Qwen, then GET the model's entry.
-//  2. Assert both responses show the stored values as effective and Kimi's entry still shows 128 and 4096.
+//  2. Assert both responses show the stored values as effective and Kimi's entry still shows 256 and 4096.
 //  3. PUT each knob at zero, negative and one past its ceiling.
 //  4. Assert each is 400 naming the knob and the stored values stay as they were.
 func TestAdminFiltersRequestCostKnobs(t *testing.T) {
@@ -228,8 +228,8 @@ func TestAdminFiltersRequestCostKnobs(t *testing.T) {
 		}
 	}
 	kimi := decodeInto[filterEntryResponse](t, live.request(t, http.MethodGet, filtersRoutePath+filtersKimiModel, "", adminHeaders()))
-	if kimi.Effective["tools_max_count"] != float64(128) || kimi.Effective["pattern_budget_bytes"] != float64(4096) {
-		t.Errorf("kimi effective = %v, want the defaults 128 and 4096", kimi.Effective)
+	if kimi.Effective["tools_max_count"] != float64(256) || kimi.Effective["pattern_budget_bytes"] != float64(4096) {
+		t.Errorf("kimi effective = %v, want the defaults 256 and 4096", kimi.Effective)
 	}
 	for _, refused := range []struct{ knob, value string }{
 		{"tools_max_count", "0"}, {"tools_max_count", "-1"}, {"tools_max_count", "257"},
